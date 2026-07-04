@@ -146,7 +146,7 @@ final class DictationCoordinator {
         var status = DictationStatus.done
         do {
             let cleanStart = Date()
-            cleaned = try await ollama.clean(raw, model: model, context: context)
+            cleaned = try await ollama.clean(raw, model: model, context: context, tone: AppSettings.tonePreset)
             Log.log(String(format: "pipeline cleanup (%@, %.2fs): \"%@\"", model, Date().timeIntervalSince(cleanStart), cleaned))
         } catch {
             status = .cleanupFailed

@@ -1,4 +1,5 @@
 import FluidAudio
+import ServiceManagement
 import SwiftUI
 
 @main
@@ -10,6 +11,10 @@ struct WisprLocalApp: App {
             Button("Open History…") {
                 appDelegate.openHistory()
             }
+            Button("Settings…") {
+                appDelegate.openSettings()
+            }
+            .keyboardShortcut(",")
             Divider()
             Button("Spike A: transcribe fixture") {
                 SpikeA.run()
@@ -31,6 +36,7 @@ struct WisprLocalApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pillPanel: PillPanel?
     private var historyWindow: NSWindow?
+    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.log("WisprLocal launched (pid \(ProcessInfo.processInfo.processIdentifier))")
@@ -38,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showPill()
         registerTestHooks()
         DictationCoordinator.shared.preloadAsr()
+        // No-op unless the user enabled the hotkey in Settings (default off).
+        HotkeyManager.shared.apply()
     }
 
     func showPill() {
@@ -80,6 +88,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "light": historyWindow?.appearance = NSAppearance(named: .aqua)
         case "dark": historyWindow?.appearance = NSAppearance(named: .darkAqua)
         default: historyWindow?.appearance = nil
+        }
+    }
+
+    func openSettings() {
+        if settingsWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "wispr-local Settings"
+            window.contentView = NSHostingView(rootView: SettingsView())
+            window.center()
+            window.isReleasedWhenClosed = false
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        Log.log("settings window shown")
+    }
+
+    /// Test-only: force the settings window's appearance for screenshots.
+    func openSettings(appearance: String?) {
+        openSettings()
+        switch appearance {
+        case "light": settingsWindow?.appearance = NSAppearance(named: .aqua)
+        case "dark": settingsWindow?.appearance = NSAppearance(named: .darkAqua)
+        default: settingsWindow?.appearance = nil
+        }
+        if let window = settingsWindow {
+            Log.log("settings window id = \(window.windowNumber), frame = \(NSStringFromRect(window.frame))")
         }
     }
 
@@ -136,6 +176,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let appearance = note.object as? String
             Log.log("test hook: openHistory (\(appearance ?? "system"))")
             self?.openHistory(appearance: appearance)
+        }
+        // Settings hooks:
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.openSettings"), object: nil, queue: .main) { [weak self] note in
+            let appearance = note.object as? String
+            Log.log("test hook: openSettings (\(appearance ?? "system"))")
+            self?.openSettings(appearance: appearance)
+        }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.settingsStatus"), object: nil, queue: .main) { _ in
+            Log.log("test hook: settingsStatus triggered")
+            V1TestHooks.logSettingsStatus()
+        }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.hotkeyApply"), object: nil, queue: .main) { _ in
+            Log.log("test hook: hotkeyApply triggered")
+            HotkeyManager.shared.apply()
+            Log.log("HOTKEY STATE: registered = \(HotkeyManager.shared.registeredBinding?.rawValue ?? "none")")
+        }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.loginToggleTest"), object: nil, queue: .main) { _ in
+            Log.log("test hook: loginToggleTest triggered")
+            V1TestHooks.runLoginToggleTest()
         }
     }
 }
@@ -199,6 +258,36 @@ enum V1TestHooks {
             audioPath: audioPath
         )
         Log.log("HISTORY CHECK: inserted entry (\(text.count) chars, audio: \(audioPath != nil)), count now \(store.count())")
+    }
+
+    /// Logs the live resolved settings + model so overrides can be verified
+    /// against the real app defaults (`defaults write com.costajohnt.wisprlocal …`).
+    static func logSettingsStatus() {
+        Task {
+            let model = await OllamaClient().resolveModel()
+            Log.log("SETTINGS STATUS: override = \(AppSettings.cleanupModelOverride ?? "nil (Auto)"), resolved model = \(model)")
+            Log.log("SETTINGS STATUS: tone = \(AppSettings.tonePreset.rawValue)")
+            Log.log("SETTINGS STATUS: hotkey enabled = \(AppSettings.hotkeyEnabled), binding = \(AppSettings.hotkeyBinding.rawValue), registered = \(HotkeyManager.shared.registeredBinding?.rawValue ?? "none")")
+        }
+    }
+
+    /// SMAppService round-trip: register → log status → unregister → log
+    /// status. Leaves launch-at-login OFF (the default) when done.
+    static func runLoginToggleTest() {
+        let service = SMAppService.mainApp
+        Log.log("LOGIN TEST: initial status = \(service.status.rawValue) (\(service.status == .enabled ? "enabled" : "not enabled"))")
+        do {
+            try service.register()
+            Log.log("LOGIN TEST: after register, status = \(service.status.rawValue) (enabled = \(service.status == .enabled))")
+        } catch {
+            Log.log("LOGIN TEST: register FAILED: \(error.localizedDescription)")
+        }
+        do {
+            try service.unregister()
+            Log.log("LOGIN TEST: after unregister, status = \(service.status.rawValue) (enabled = \(service.status == .enabled))")
+        } catch {
+            Log.log("LOGIN TEST: unregister FAILED: \(error.localizedDescription)")
+        }
     }
 
     static func logHistoryState() {

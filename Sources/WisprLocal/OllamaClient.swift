@@ -25,6 +25,28 @@ struct OllamaClient {
         meaning, do NOT converse or add commentary. Output ONLY the corrected transcript text.
         """
 
+    /// Base system prompt for a tone preset (docs/settings-panel.md §2).
+    /// Every preset CONTAINS the full faithful core verbatim — presets only
+    /// APPEND a style layer, so the reformat-don't-answer / don't-invent guard
+    /// is identical in all of them. `.faithful` is byte-identical to the
+    /// original prompt (the zero-config non-regression case).
+    static func systemPrompt(for tone: TonePreset) -> String {
+        switch tone {
+        case .faithful:
+            return systemPrompt
+        case .polished:
+            return systemPrompt + """
+                 Style: additionally tighten grammar and phrasing so the text reads cleanly and \
+                professionally, but never change the meaning, and never add or drop information.
+                """
+        case .casual:
+            return systemPrompt + """
+                 Style: keep the user's relaxed, spoken tone and word choice; only remove fillers \
+                and fix punctuation and clear transcription errors.
+                """
+        }
+    }
+
     /// Few-shot pairs: small models reliably slip into answering dictated
     /// questions on instructions alone (llama3.2:3b answered "what time is it"
     /// in testing). Examples pin the reformat-don't-answer behavior.
@@ -90,14 +112,21 @@ struct OllamaClient {
         }
     }
 
-    /// Preferred model if installed; otherwise fall back (with a log line),
-    /// never crash. If the tags call itself fails, return the preferred model
-    /// and let `clean` surface the real connection error.
+    /// Settings override first (docs/settings-panel.md §1): if the user picked
+    /// a model AND it's installed, use it; if Ollama is unreachable we can't
+    /// verify, so honor the stored choice and let `clean` surface the real
+    /// connection error; if it's verifiably gone, log and behave as Auto.
+    /// Auto = preferred-by-RAM with the existing fallback chain — with no
+    /// override set this is byte-identical to the pre-settings behavior.
     func resolveModel() async -> String {
-        let preferred = Self.preferredModel
-        guard let installed = try? await installedModels(), !installed.isEmpty else {
-            return preferred
+        let installed = (try? await installedModels()) ?? []
+        if let override = AppSettings.cleanupModelOverride {
+            if installed.contains(override) { return override }
+            if installed.isEmpty { return override }
+            Log.log("ollama: override \(override) not installed, using Auto")
         }
+        let preferred = Self.preferredModel
+        guard !installed.isEmpty else { return preferred }
         if installed.contains(preferred) { return preferred }
         if installed.contains(Self.fallbackModel) {
             Log.log("ollama: preferred model \(preferred) not installed, falling back to \(Self.fallbackModel)")
@@ -114,12 +143,19 @@ struct OllamaClient {
     /// (recent transcripts + auto-glossary). It goes in as a second system
     /// message — after the base prompt, before the few-shot pairs — so the
     /// reformat-don't-answer examples stay the last word before the transcript.
-    func clean(_ rawTranscript: String, model: String, context: String? = nil) async throws -> String {
+    /// `tone` picks the base system prompt; `.faithful` (default) is the
+    /// original prompt unchanged.
+    func clean(
+        _ rawTranscript: String,
+        model: String,
+        context: String? = nil,
+        tone: TonePreset = .faithful
+    ) async throws -> String {
         let url = Self.baseURL.appendingPathComponent("api/chat")
         var request = URLRequest(url: url, timeoutInterval: Self.requestTimeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var messages = [ChatMessage(role: "system", content: Self.systemPrompt)]
+        var messages = [ChatMessage(role: "system", content: Self.systemPrompt(for: tone))]
         if let context, !context.isEmpty {
             messages.append(ChatMessage(role: "system", content: context))
         }

@@ -10,6 +10,7 @@ mkdir -p build
 swiftc -parse-as-library \
   -target arm64-apple-macos14.0 \
   Sources/WisprLocal/OllamaClient.swift \
+  Sources/WisprLocal/AppSettings.swift \
   Sources/WisprLocal/CleanupContext.swift \
   Sources/WisprLocal/HistoryStore.swift \
   Sources/WisprLocal/Log.swift \
