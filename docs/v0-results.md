@@ -51,6 +51,41 @@ previously-frontmost app until the run loop caught up). Not a focus-stealing iss
 but for v1, track `NSWorkspace.didActivateApplicationNotification` to know the
 injection target instead of trusting a point-in-time read.
 
+### acceptsFirstMouse fix (post-review)
+
+John's real clicks did nothing even though the CGEvent-driven test fired. Root cause:
+the panel never becomes key, so every human click is a **"first mouse"** event, and
+AppKit drops it unless the hit view returns `acceptsFirstMouse == true`. Fixes applied:
+
+- `PillHostingView` (an `NSHostingView` subclass) overrides
+  `acceptsFirstMouse(for:) -> true` and is the panel's content view.
+- The click is handled by an **AppKit `NSClickGestureRecognizer`** on the hosting
+  view — the SwiftUI content is purely visual, so no SwiftUI `Button` competes for
+  first-mouse. Single code path, no double-fire.
+- Clicking now toggles an obvious visual state (see redesign below) instead of only
+  writing to the log.
+
+Re-verified after the fix (CGEvent clicks with TextEdit frontmost — the synthetic
+path; the human first-click is on the manual checklist):
+
+```
+[2026-07-04T20:37:29Z] SPIKE B CLICK: frontmostApplication = com.apple.TextEdit (TextEdit) — pill state: listening
+[2026-07-04T20:37:31Z] SPIKE B CLICK: frontmostApplication = com.apple.TextEdit (TextEdit) — pill state: idle
+```
+
+### Pill redesign (Wispr Flow lozenge)
+
+- 120 × 26 capsule (`PillMetrics`), bottom-center, no icon, no text.
+- Real behind-window blur: `NSVisualEffectView` (`.hudWindow`, `.behindWindow`,
+  `.active`) clipped to the capsule, dark tint over it (lighter while listening),
+  hairline white border.
+- Idle: 4 equal faint dots. Listening (after a click): dots brighten to near-white
+  and pulse in a staggered bounce; click again to return to idle.
+- SwiftUI gotcha hit and fixed: `repeatForever` animations don't tear down when the
+  driving value flips — dots froze mid-pulse back in idle. Idle and listening are
+  now **separate view identities** (`StaticDots` / `PulsingDots`), so the animation
+  is destroyed on toggle. Verified with before/during/after screenshots.
+
 ## Spike C — paste-inject (BLOCKED on TCC grant → manual)
 
 Implemented per spec: clipboard snapshot (all items × all types) → set string →
@@ -116,7 +151,7 @@ API note: FluidAudio v0.15.4's actual signature is
 ## Manual test checklist for John
 
 1. `./scripts/build.sh && ./scripts/run.sh` (menubar waveform icon appears; pill shows bottom-center).
-2. **Spike B (caret check):** open TextEdit, type a few words, click the pill mid-sentence, keep typing without re-clicking TextEdit. Characters must keep landing in TextEdit and the caret must never leave it. `tail -f /tmp/wisprlocal.log` should show `SPIKE B CLICK: frontmostApplication = com.apple.TextEdit`.
+2. **Spike B (caret check):** open TextEdit, type a few words, click the pill mid-sentence, keep typing without re-clicking TextEdit. The dots must light up and pulse on the FIRST click (this is the acceptsFirstMouse fix — no visual change means the click was dropped), characters must keep landing in TextEdit, and the caret must never leave it. `tail -f /tmp/wisprlocal.log` should show `SPIKE B CLICK: frontmostApplication = com.apple.TextEdit`. Click again: dots dim back to idle.
 3. **Grant Accessibility:** System Settings → Privacy & Security → Accessibility → toggle WisprLocal on. (If it's not listed, trigger Spike C once from the menubar first.)
 4. **Spike C (paste):** copy something distinctive (e.g. "MARKER123"). Menubar → "Spike C: inject…", then click into a TextEdit document within 3 s. Verify: (a) `hello from wispr-local` appears at the cursor; (b) after ~1 s, ⌘V manually pastes `MARKER123` again (clipboard restored).
 5. **Spike A (offline check):** menubar → "Spike A: transcribe fixture" once, let it finish; then turn Wi-Fi off and run it again — should transcribe with no network (models cached in `~/Library/Application Support/FluidAudio/Models`).
