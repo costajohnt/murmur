@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Xcode / XcodeGen
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.moved-aside
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Generated Xcode project (regenerated from project.yml via xcodegen)
+WisprLocal.xcodeproj/
+
+# Built app bundle
+*.app
+dist/
+
+# CoreML / model caches downloaded at runtime
+Models/
+*.mlmodelc
+
+# Local scratch
+*.wav
+scratch/
