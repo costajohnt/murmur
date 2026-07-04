@@ -153,6 +153,30 @@ voice rhythm noticeably (close-mic speech will drive them higher than the
 speaker-playback test did). If they feel too shy/too hot, tune `dbFloor` /
 `dbCeiling` in `AudioRecorder`.
 
+## History window redesign (Wispr Flow transcript style)
+
+Re-skinned per `docs/history-design.md`: single centered column (max 760 pt),
+warm off-white / deep-neutral backgrounds (system light+dark via
+`colorScheme`), serif "History" title, right-aligned "Search transcripts"
+field (live case-insensitive filter over cleaned + raw), date groups
+(TODAY / YESTERDAY / `JULY 4, 2026` uppercase tracked headers), rows =
+72 pt muted timestamp (`2:13 pm`) + 15 pt body with a light line-by-line
+bullet renderer (`-`/`*`/`•` lines fold into bulleted lists) + hover-revealed
+trailing actions (Copy icon with "copied" flash, ··· menu: Insert at cursor /
+Re-clean with in-row spinner / Delete). Failure statuses show a small
+amber/red dot by the timestamp; `done` shows nothing. Hairline dividers, no
+cards. Window opens 820×720, resizable. Old disclosure-row layout removed.
+
+**Verified:**
+- Build clean; screenshots of both modes with real entries (incl. a bulleted
+  transcript and the amber `cleanup_failed` dot):
+  `/tmp/history-light.png`, `/tmp/history-dark.png`.
+- `HistoryStore.delete` added and proven: disposable entry with a dummy WAV →
+  delete → `DELETE CHECK: count 8 -> 7, audio file removed = true`.
+- Search/hover/menu interactions are UI-manual: John should type in the search
+  field (rows filter live, "No matches." on a dud query), hover a row (actions
+  fade in), and try Copy / Insert / Re-clean / Delete once each.
+
 ## Notes / deviations
 
 - History currently contains 4 test entries from the automated checks (one

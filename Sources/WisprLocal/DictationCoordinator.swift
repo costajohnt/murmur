@@ -133,12 +133,20 @@ final class DictationCoordinator {
         }
 
         // 2. Cleanup (Ollama) — on any failure fall back to the raw transcript.
+        // Context-aware: feed recent history so the model corrects ASR errors
+        // toward the user's real vocabulary (docs/context-cleanup.md). Empty
+        // history → nil context → identical to the old cold-start behavior.
+        let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: CleanupContext.glossarySourceLimit) ?? []
+        let context = CleanupContext.build(from: recentTexts)
+        if let context {
+            Log.log("pipeline cleanup context: \(context.count) chars from \(recentTexts.count) history entries")
+        }
         let model = await ollama.resolveModel()
         var cleaned = raw
         var status = DictationStatus.done
         do {
             let cleanStart = Date()
-            cleaned = try await ollama.clean(raw, model: model)
+            cleaned = try await ollama.clean(raw, model: model, context: context)
             Log.log(String(format: "pipeline cleanup (%@, %.2fs): \"%@\"", model, Date().timeIntervalSince(cleanStart), cleaned))
         } catch {
             status = .cleanupFailed

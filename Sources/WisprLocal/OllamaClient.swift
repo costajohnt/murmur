@@ -109,12 +109,20 @@ struct OllamaClient {
 
     /// Cleans a raw transcript. Throws OllamaError on any failure — the caller
     /// decides the fallback (inject raw + mark cleanup_failed).
-    func clean(_ rawTranscript: String, model: String) async throws -> String {
+    ///
+    /// `context` is the optional personalization block from `CleanupContext`
+    /// (recent transcripts + auto-glossary). It goes in as a second system
+    /// message — after the base prompt, before the few-shot pairs — so the
+    /// reformat-don't-answer examples stay the last word before the transcript.
+    func clean(_ rawTranscript: String, model: String, context: String? = nil) async throws -> String {
         let url = Self.baseURL.appendingPathComponent("api/chat")
         var request = URLRequest(url: url, timeoutInterval: Self.requestTimeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var messages = [ChatMessage(role: "system", content: Self.systemPrompt)]
+        if let context, !context.isEmpty {
+            messages.append(ChatMessage(role: "system", content: context))
+        }
         for example in Self.fewShot {
             messages.append(ChatMessage(role: "user", content: example.user))
             messages.append(ChatMessage(role: "assistant", content: example.assistant))

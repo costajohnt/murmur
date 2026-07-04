@@ -130,6 +130,23 @@ final class HistoryStore {
         return (try? context.fetch(descriptor))?.first
     }
 
+    /// Last `limit` successful cleaned texts, newest first — the context
+    /// source for context-aware cleanup (docs/context-cleanup.md).
+    func recentCleanedTexts(limit: Int) -> [String] {
+        Self.recentCleanedTexts(in: context, limit: limit)
+    }
+
+    /// Static core so the fetch is testable against an in-memory container.
+    static func recentCleanedTexts(in context: ModelContext, limit: Int) -> [String] {
+        let doneRaw = DictationStatus.done.rawValue
+        var descriptor = FetchDescriptor<Dictation>(
+            predicate: #Predicate { $0.statusRaw == doneRaw && !$0.cleanedText.isEmpty },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = limit
+        return ((try? context.fetch(descriptor)) ?? []).map(\.cleanedText)
+    }
+
     /// Deletes an entry and its backing WAV (if any).
     func delete(_ entry: Dictation) {
         if let path = entry.audioPath {
