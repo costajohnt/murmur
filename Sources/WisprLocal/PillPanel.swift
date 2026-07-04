@@ -12,8 +12,14 @@ enum PillMetrics {
 
 // MARK: - State
 
+enum PillPhase {
+    case idle
+    case listening
+    case processing
+}
+
 final class PillState: ObservableObject {
-    @Published var isListening = false
+    @Published var phase: PillPhase = .idle
 }
 
 // MARK: - Hosting view (first-mouse fix)
@@ -39,7 +45,7 @@ final class PillPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    private let pillState = PillState()
+    private let pillState = DictationCoordinator.shared.pillState
 
     init() {
         let size = NSSize(width: PillMetrics.width, height: PillMetrics.height)
@@ -72,13 +78,11 @@ final class PillPanel: NSPanel {
     }
 
     @objc private func pillClicked() {
-        pillState.isListening.toggle()
-        // THE Spike B check: at click time, who is frontmost?
-        // Must be the app the user was in (e.g. TextEdit), NOT WisprLocal.
+        // Spike B evidence line kept for regression checks: at click time,
+        // frontmost must be the user's app, NOT WisprLocal.
         let front = NSWorkspace.shared.frontmostApplication
-        let bundleId = front?.bundleIdentifier ?? "nil"
-        let name = front?.localizedName ?? "nil"
-        Log.log("SPIKE B CLICK: frontmostApplication = \(bundleId) (\(name)) — pill state: \(pillState.isListening ? "listening" : "idle")")
+        Log.log("PILL CLICK: frontmostApplication = \(front?.bundleIdentifier ?? "nil") (\(front?.localizedName ?? "nil"))")
+        DictationCoordinator.shared.pillTapped()
     }
 
     private func positionBottomCenter() {
@@ -111,32 +115,40 @@ struct PillView: View {
     var body: some View {
         ZStack {
             VisualEffectBlur()
-            // Dark tint over the blur; lightens a touch while listening.
-            Capsule().fill(Color.black.opacity(state.isListening ? 0.20 : 0.35))
-            RestingDots(listening: state.isListening)
+            // Dark tint over the blur; lightens a touch while active.
+            Capsule().fill(Color.black.opacity(tintOpacity))
+            phaseContent
         }
         .clipShape(Capsule())
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
         .frame(width: PillMetrics.width, height: PillMetrics.height)
         .contentShape(Capsule())
     }
-}
 
-/// Idle: a subtle row of faint dots. Listening: the dots pulse in a staggered
-/// bounce and brighten — the obvious click feedback / v1 state preview.
-/// Idle and listening are separate view identities so the repeatForever
-/// animation is fully torn down on toggle (otherwise dots freeze mid-pulse).
-private struct RestingDots: View {
-    let listening: Bool
+    private var tintOpacity: Double {
+        switch state.phase {
+        case .idle: return 0.35
+        case .listening: return 0.20
+        case .processing: return 0.28
+        }
+    }
 
-    var body: some View {
-        if listening {
-            PulsingDots()
-        } else {
+    @ViewBuilder
+    private var phaseContent: some View {
+        switch state.phase {
+        case .idle:
             StaticDots()
+        case .listening:
+            PulsingDots()
+        case .processing:
+            SweepDot()
         }
     }
 }
+
+// Idle / listening / processing are separate view identities so repeatForever
+// animations are fully torn down on phase change (otherwise dots freeze
+// mid-pulse — hit in v0).
 
 private struct StaticDots: View {
     var body: some View {
@@ -169,5 +181,23 @@ private struct PulsingDots: View {
             }
         }
         .onAppear { pulsing = true }
+    }
+}
+
+/// Processing: a single bright dot sweeping side to side (distinct from the
+/// pulsing row) — "working on it".
+private struct SweepDot: View {
+    @State private var sweeping = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.white.opacity(0.9))
+            .frame(width: 5, height: 5)
+            .offset(x: sweeping ? 16 : -16)
+            .animation(
+                .easeInOut(duration: 0.5).repeatForever(autoreverses: true),
+                value: sweeping
+            )
+            .onAppear { sweeping = true }
     }
 }
