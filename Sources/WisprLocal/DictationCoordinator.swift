@@ -149,6 +149,27 @@ final class DictationCoordinator {
             return
         }
 
+        await finish(raw: raw, audioPath: audioPath, durationMs: durationMs, target: target)
+    }
+
+    /// Post-ASR pipeline tail: near-silence guard → cleanup → inject →
+    /// persist. Split from `process()` so the dev guard-test hook can drive
+    /// it with a known transcript (ASR output on ambient noise is
+    /// nondeterministic, so the guard can't be exercised reliably end-to-end
+    /// from real audio).
+    func finish(raw: String, audioPath: String?, durationMs: Int?, target: NSRunningApplication?) async {
+        // 1.5 Near-silence guard: a trivially short transcript is mic noise,
+        // not speech — and the cleanup model invents content for it (observed:
+        // ASR "S" → "Sorry, I didn't catch that..."). Discard outright: no
+        // cleanup, no inject, no history entry, and drop the orphaned WAV.
+        guard TranscriptGuard.isMeaningful(raw) else {
+            Log.log("pipeline: no meaningful speech (raw=\"\(raw)\"), discarded")
+            if let audioPath {
+                try? FileManager.default.removeItem(atPath: audioPath)
+            }
+            return
+        }
+
         // 2. Cleanup (Ollama) — on any failure fall back to the raw transcript.
         // Context-aware: feed recent history so the model corrects ASR errors
         // toward the user's real vocabulary (docs/context-cleanup.md). Empty

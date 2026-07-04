@@ -175,6 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.log("test hook: cancelTest triggered")
             V1TestHooks.runCancelTest()
         }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.guardTest"), object: nil, queue: .main) { _ in
+            Log.log("test hook: guardTest triggered")
+            V1TestHooks.runGuardTest()
+        }
         center.addObserver(forName: .init("com.costajohnt.wisprlocal.mainMenu"), object: nil, queue: .main) { _ in
             let titles = NSApp.mainMenu?.items.map(\.title) ?? []
             Log.log("MAIN MENU: policy = \(NSApp.activationPolicy().rawValue) (0 = regular), items = \(titles)")
@@ -314,6 +318,27 @@ enum V1TestHooks {
             try? await Task.sleep(nanoseconds: 500_000_000)
             let after = store?.count() ?? -1
             Log.log("CANCEL TEST: history count \(before) -> \(after) (no new entry = \(before == after)), phase = \(coordinator.pillState.phase)")
+        }
+    }
+
+    /// Near-silence guard check: drive the REAL post-ASR pipeline tail with a
+    /// 1-char transcript ("S" — the observed hallucination trigger) and prove
+    /// it is discarded: no cleanup, no inject, no history entry, and the
+    /// orphaned WAV is deleted.
+    static func runGuardTest() {
+        Task { @MainActor in
+            let store = HistoryStore.shared
+            let before = store?.count() ?? -1
+            // Dummy WAV standing in for the already-persisted recording.
+            let wavURL = HistoryStore.audioURL(for: UUID())
+            FileManager.default.createFile(atPath: wavURL.path, contents: Data("dummy".utf8))
+
+            await DictationCoordinator.shared.finish(
+                raw: "S", audioPath: wavURL.path, durationMs: 1500, target: nil)
+
+            let after = store?.count() ?? -1
+            let wavGone = !FileManager.default.fileExists(atPath: wavURL.path)
+            Log.log("GUARD TEST: raw \"S\" → history count \(before) -> \(after) (no new entry = \(before == after)), orphan wav deleted = \(wavGone)")
         }
     }
 
