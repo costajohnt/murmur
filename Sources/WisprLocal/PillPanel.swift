@@ -4,9 +4,9 @@ import SwiftUI
 // MARK: - Metrics
 
 enum PillMetrics {
-    /// Idle: tiny, unobtrusive — just the four faint dots.
-    static let idleWidth: CGFloat = 60
-    static let idleHeight: CGFloat = 20
+    /// Idle: tiny, empty, near-transparent — a barely-there lozenge.
+    static let idleWidth: CGFloat = 44
+    static let idleHeight: CGFloat = 14
     /// Active (listening/processing): expands to ✕ | waveform | ✓.
     static let activeWidth: CGFloat = 150
     static let activeHeight: CGFloat = 32
@@ -190,7 +190,7 @@ struct PillView: View {
             phaseContent
         }
         .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(borderOpacity), lineWidth: 1))
         .frame(
             width: isExpanded ? PillMetrics.activeWidth : PillMetrics.idleWidth,
             height: isExpanded ? PillMetrics.activeHeight : PillMetrics.idleHeight
@@ -202,17 +202,26 @@ struct PillView: View {
 
     private var tintOpacity: Double {
         switch state.phase {
-        case .idle: return 0.35
+        case .idle: return 0.12   // faint at rest — deliberately barely-there
         case .listening: return 0.20
         case .processing: return 0.28
         }
+    }
+
+    /// Border softens at rest too, so the idle pill reads as a whisper of a
+    /// shape rather than an outlined control.
+    private var borderOpacity: Double {
+        state.phase == .idle ? 0.10 : 0.18
     }
 
     @ViewBuilder
     private var phaseContent: some View {
         switch state.phase {
         case .idle:
-            StaticDots()
+            // Intentionally empty: the idle pill is just a translucent
+            // lozenge — no dots, no icons (John's call; if it proves too
+            // invisible, add a whisper-faint indicator later).
+            EmptyView()
         case .listening:
             ListeningControls(levels: state.levelHistory)
         case .processing:
@@ -257,18 +266,6 @@ private struct ListeningControls: View {
 // Idle / listening / processing are separate view identities so repeatForever
 // animations are fully torn down on phase change (otherwise dots freeze
 // mid-pulse — hit in v0).
-
-private struct StaticDots: View {
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<4, id: \.self) { _ in
-                Circle()
-                    .fill(Color.white.opacity(0.45))
-                    .frame(width: 4, height: 4)
-            }
-        }
-    }
-}
 
 /// Listening: a live rolling audio-level histogram — 7 thin vertical bars
 /// whose heights follow the recent mic levels (newest on the right). Silence
