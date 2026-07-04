@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if historyWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+                contentRect: NSRect(x: 0, y: 0, width: 820, height: 720),
                 styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
@@ -70,6 +70,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         historyWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Test-only: force the history window's appearance ("light"/"dark"/nil
+    /// = follow system) so both modes can be screenshot-verified.
+    func openHistory(appearance: String?) {
+        openHistory()
+        switch appearance {
+        case "light": historyWindow?.appearance = NSAppearance(named: .aqua)
+        case "dark": historyWindow?.appearance = NSAppearance(named: .darkAqua)
+        default: historyWindow?.appearance = nil
+        }
     }
 
     /// Headless test hooks (dev only): trigger flows from the command line via
@@ -95,9 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.log("test hook: ollamaTest triggered")
             V1TestHooks.runOllamaChecks()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyTest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyTest"), object: nil, queue: .main) { note in
             Log.log("test hook: historyTest triggered")
-            V1TestHooks.runHistoryCheck()
+            V1TestHooks.runHistoryCheck(customText: note.object as? String)
         }
         center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyCount"), object: nil, queue: .main) { _ in
             V1TestHooks.logHistoryState()
@@ -109,6 +120,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.addObserver(forName: .init("com.costajohnt.wisprlocal.meterTest"), object: nil, queue: .main) { _ in
             Log.log("test hook: meterTest triggered")
             V1TestHooks.runMeterTest()
+        }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyDeleteNewest"), object: nil, queue: .main) { _ in
+            guard let store = HistoryStore.shared, let newest = store.newest() else {
+                Log.log("DELETE CHECK: no entry to delete")
+                return
+            }
+            let audioPath = newest.audioPath
+            let before = store.count()
+            store.delete(newest)
+            let audioGone = audioPath.map { !FileManager.default.fileExists(atPath: $0) } ?? true
+            Log.log("DELETE CHECK: count \(before) -> \(store.count()), audio file removed = \(audioGone) (path: \(audioPath ?? "none"))")
+        }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.openHistory"), object: nil, queue: .main) { [weak self] note in
+            let appearance = note.object as? String
+            Log.log("test hook: openHistory (\(appearance ?? "system"))")
+            self?.openHistory(appearance: appearance)
         }
     }
 }
@@ -147,19 +174,31 @@ enum V1TestHooks {
     }
 
     /// Inserts a marker entry; relaunch + historyCount proves persistence.
-    static func runHistoryCheck() {
+    /// Pass a custom string via the notification object to control content
+    /// (used to eyeball the bullet-list renderer).
+    static func runHistoryCheck(customText: String? = nil) {
         guard let store = HistoryStore.shared else {
             Log.log("HISTORY CHECK FAILED: store unavailable")
             return
         }
-        let marker = "persistence-check \(ISO8601DateFormatter().string(from: Date()))"
+        var text = customText ?? "persistence-check \(ISO8601DateFormatter().string(from: Date()))"
+        // "withaudio:" prefix → also create a dummy WAV so delete-with-audio
+        // can be verified without touching real dictations.
+        var audioPath: String?
+        if text.hasPrefix("withaudio:") {
+            text = String(text.dropFirst("withaudio:".count))
+            let url = HistoryStore.audioURL(for: UUID())
+            FileManager.default.createFile(atPath: url.path, contents: Data("dummy".utf8))
+            audioPath = url.path
+        }
         store.add(
-            rawTranscript: "raw \(marker)",
-            cleanedText: marker,
+            rawTranscript: "raw: \(text.prefix(60))",
+            cleanedText: text,
             modelName: "test",
-            status: .done
+            status: .done,
+            audioPath: audioPath
         )
-        Log.log("HISTORY CHECK: inserted entry \"\(marker)\", count now \(store.count())")
+        Log.log("HISTORY CHECK: inserted entry (\(text.count) chars, audio: \(audioPath != nil)), count now \(store.count())")
     }
 
     static func logHistoryState() {

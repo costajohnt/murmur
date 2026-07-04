@@ -130,6 +130,15 @@ final class HistoryStore {
         return (try? context.fetch(descriptor))?.first
     }
 
+    /// Deletes an entry and its backing WAV (if any).
+    func delete(_ entry: Dictation) {
+        if let path = entry.audioPath {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        context.delete(entry)
+        save()
+    }
+
     /// Naive retention: delete entries beyond the newest `maxEntries` (and
     /// their audio), and audio files older than `audioRetentionDays`.
     func prune() {

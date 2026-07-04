@@ -2,81 +2,186 @@ import AppKit
 import SwiftData
 import SwiftUI
 
-/// History window: dictations newest-first with Copy / Insert at cursor /
-/// Re-clean per row.
+/// History window, Wispr Flow transcript style: one flat, editorial column of
+/// date-grouped transcripts. No sidebar, no stats — transcripts only.
 struct HistoryView: View {
     @Query(sort: \Dictation.createdAt, order: .reverse) private var entries: [Dictation]
+    @State private var searchText = ""
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Group {
-            if entries.isEmpty {
-                Text("No dictations yet. Click the pill, speak, click again.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(entries) { entry in
-                    DictationRow(entry: entry)
-                        .padding(.vertical, 4)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                headerRow
+                    .padding(.bottom, 20)
+
+                if entries.isEmpty {
+                    emptyState("No transcripts yet — click the pill and start talking.")
+                } else if filtered.isEmpty {
+                    emptyState("No matches.")
+                } else {
+                    ForEach(groups, id: \.header) { group in
+                        Text(group.header)
+                            .font(.system(size: 11, weight: .semibold))
+                            .tracking(1.4)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 28)
+                            .padding(.bottom, 6)
+
+                        ForEach(group.items) { entry in
+                            TranscriptRow(entry: entry)
+                            HistoryTheme.divider
+                        }
+                    }
                 }
             }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 28)
+            .frame(maxWidth: .infinity)
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .background(HistoryTheme.background(colorScheme))
+        .frame(minWidth: 640, minHeight: 480)
+    }
+
+    // MARK: - Header (title + search)
+
+    private var headerRow: some View {
+        HStack(alignment: .center) {
+            Text("History")
+                .font(.system(size: 20, weight: .semibold, design: .serif))
+            Spacer()
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                TextField("Search transcripts", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(HistoryTheme.searchFill(colorScheme))
+            )
+            .frame(width: 240)
+        }
+    }
+
+    private func emptyState(_ message: String) -> some View {
+        Text(message)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 120)
+    }
+
+    // MARK: - Filtering + grouping
+
+    private var filtered: [Dictation] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return entries }
+        return entries.filter {
+            $0.cleanedText.localizedCaseInsensitiveContains(query)
+                || $0.rawTranscript.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var groups: [(header: String, items: [Dictation])] {
+        let calendar = Calendar.current
+        var order: [Date] = []
+        var byDay: [Date: [Dictation]] = [:]
+        for entry in filtered {
+            let day = calendar.startOfDay(for: entry.createdAt)
+            if byDay[day] == nil { order.append(day) }
+            byDay[day, default: []].append(entry)
+        }
+        return order.map { day in
+            (header: Self.dayHeader(for: day, calendar: calendar), items: byDay[day] ?? [])
+        }
+    }
+
+    private static func dayHeader(for day: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(day) { return "TODAY" }
+        if calendar.isDateInYesterday(day) { return "YESTERDAY" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d, yyyy"
+        return formatter.string(from: day).uppercased()
     }
 }
 
-private struct DictationRow: View {
+// MARK: - Row
+
+private struct TranscriptRow: View {
     let entry: Dictation
-    @State private var showRaw = false
+    @State private var hovering = false
     @State private var recleaning = false
-    @State private var actionNote: String?
+    @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(entry.createdAt, format: .relative(presentation: .named))
-                    .font(.caption)
+        HStack(alignment: .top, spacing: 16) {
+            // Left: timestamp (+ subtle failure dot).
+            HStack(spacing: 5) {
+                if entry.status != .done {
+                    Circle()
+                        .fill(entry.status == .cleanupFailed ? Color.orange.opacity(0.7) : Color.red.opacity(0.7))
+                        .frame(width: 6, height: 6)
+                        .help(entry.status.label)
+                }
+                Text(Self.timeFormatter.string(from: entry.createdAt).lowercased())
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                statusBadge
-                if let ms = entry.durationMs {
-                    Text(String(format: "%.1fs", Double(ms) / 1000))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                if !entry.modelName.isEmpty {
-                    Text(entry.modelName)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer()
-                if let note = actionNote {
-                    Text(note)
-                        .font(.caption)
+            }
+            .frame(width: 72, alignment: .leading)
+            .padding(.top, 2)
+
+            // Body: cleaned transcript with light bullet rendering.
+            TranscriptBody(text: primaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Trailing hover actions.
+            HStack(spacing: 8) {
+                if copied {
+                    Text("copied")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .transition(.opacity)
                 }
-            }
-
-            Text(primaryText)
-                .font(.body)
-                .textSelection(.enabled)
-
-            DisclosureGroup("Raw transcript", isExpanded: $showRaw) {
-                Text(entry.rawTranscript.isEmpty ? "(empty)" : entry.rawTranscript)
-                    .font(.callout)
+                if recleaning {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Button(action: copy) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            .font(.caption)
+                    .help("Copy")
 
-            HStack(spacing: 12) {
-                Button("Copy") { copy() }
-                Button("Insert at cursor") { insert() }
-                Button(recleaning ? "Re-cleaning…" : "Re-clean") { reclean() }
-                    .disabled(recleaning || entry.rawTranscript.isEmpty)
+                    Menu {
+                        Button("Insert at cursor") { insert() }
+                        Button("Re-clean") { reclean() }
+                            .disabled(entry.rawTranscript.isEmpty)
+                        Divider()
+                        Button("Delete", role: .destructive) { delete() }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 12))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.link)
-            .font(.caption)
+            .opacity(hovering || recleaning || copied ? 1 : 0)
+            .animation(.easeInOut(duration: 0.15), value: hovering)
+            .padding(.top, 2)
         }
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
     }
 
     private var primaryText: String {
@@ -85,36 +190,28 @@ private struct DictationRow: View {
         return "(no transcript)"
     }
 
-    private var statusBadge: some View {
-        Text(entry.status.label)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(badgeColor.opacity(0.2)))
-            .foregroundStyle(badgeColor)
-    }
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
 
-    private var badgeColor: Color {
-        switch entry.status {
-        case .done: return .green
-        case .cleanupFailed: return .orange
-        case .asrFailed: return .red
-        }
-    }
+    // MARK: - Actions
 
     private func copy() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(primaryText, forType: .string)
-        flash("copied")
+        withAnimation { copied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { copied = false }
+        }
     }
 
     private func insert() {
         let target = TargetAppTracker.shared.lastActiveApp
         Log.log("history insert: target = \(target?.bundleIdentifier ?? "none")")
-        TextInjector.inject(primaryText, into: target) { ok, error in
-            flash(ok ? "inserted" : (error ?? "failed"))
-        }
+        TextInjector.inject(primaryText, into: target)
     }
 
     private func reclean() {
@@ -129,21 +226,105 @@ private struct DictationRow: View {
                 entry.modelName = model
                 entry.status = .done
                 Log.log("history re-clean OK (\(model)): \"\(cleaned)\"")
-                flash("re-cleaned")
             } catch {
                 entry.status = .cleanupFailed
                 Log.log("history re-clean FAILED: \(error.localizedDescription)")
-                flash("re-clean failed")
             }
             HistoryStore.shared?.save()
             recleaning = false
         }
     }
 
-    private func flash(_ note: String) {
-        withAnimation { actionNote = note }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation { actionNote = nil }
+    private func delete() {
+        Log.log("history delete: \(entry.id)")
+        withAnimation(.easeOut(duration: 0.2)) {
+            HistoryStore.shared?.delete(entry)
         }
+    }
+}
+
+// MARK: - Transcript body (light markdown: paragraphs + bullets)
+
+private struct TranscriptBody: View {
+    let text: String
+
+    private enum Block: Hashable {
+        case paragraph(String)
+        case bullets([String])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .paragraph(let text):
+                    Text(text)
+                case .bullets(let items):
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("•")
+                                Text(item)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .font(.system(size: 15))
+        .lineSpacing(3)
+        .textSelection(.enabled)
+    }
+
+    /// Line-by-line: consecutive `-` / `*` / `•` lines fold into one bullet
+    /// list; other non-empty lines are paragraphs.
+    private var blocks: [Block] {
+        var result: [Block] = []
+        var bullets: [String] = []
+        func flushBullets() {
+            if !bullets.isEmpty {
+                result.append(.bullets(bullets))
+                bullets = []
+            }
+        }
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                flushBullets()
+                continue
+            }
+            if let marker = ["- ", "* ", "• "].first(where: { line.hasPrefix($0) }) {
+                bullets.append(String(line.dropFirst(marker.count)))
+            } else if line == "-" || line == "*" || line == "•" {
+                bullets.append("")
+            } else {
+                flushBullets()
+                result.append(.paragraph(line))
+            }
+        }
+        flushBullets()
+        return result
+    }
+}
+
+// MARK: - Theme
+
+private enum HistoryTheme {
+    static func background(_ scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color(red: 0.11, green: 0.11, blue: 0.12)   // deep neutral
+            : Color(red: 0.968, green: 0.965, blue: 0.953) // warm off-white #F7F6F3
+    }
+
+    static func searchFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color.white.opacity(0.07)
+            : Color.black.opacity(0.05)
+    }
+
+    static var divider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 0.5)
     }
 }
