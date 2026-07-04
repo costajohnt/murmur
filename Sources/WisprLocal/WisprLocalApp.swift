@@ -106,6 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.log("test hook: pipelineFixture triggered")
             V1TestHooks.runPipelineOnFixture()
         }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.meterTest"), object: nil, queue: .main) { _ in
+            Log.log("test hook: meterTest triggered")
+            V1TestHooks.runMeterTest()
+        }
     }
 }
 
@@ -165,6 +169,36 @@ enum V1TestHooks {
         }
         let newest = store.newest()
         Log.log("HISTORY STATE: count = \(store.count()), newest = \"\(newest?.cleanedText ?? "-")\" (\(newest?.statusRaw ?? "-"))")
+    }
+
+    /// Meter check without the pipeline: records for ~6 s on a standalone
+    /// recorder, drives the pill's listening meter, and logs the smoothed
+    /// level once per 500 ms. Nothing is transcribed, injected, or persisted.
+    static func runMeterTest() {
+        Task { @MainActor in
+            let recorder = AudioRecorder()
+            let state = DictationCoordinator.shared.pillState
+            recorder.onLevel = { level in
+                DispatchQueue.main.async { state.pushLevel(level) }
+            }
+            do {
+                try await recorder.start()
+            } catch {
+                Log.log("METER TEST FAILED: \(error.localizedDescription)")
+                return
+            }
+            state.phase = .listening
+            for tick in 0..<12 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                Log.log(String(format: "METER TEST level[%02d] = %.3f (bars: %@)",
+                               tick, state.audioLevel,
+                               state.levelHistory.map { String(format: "%.2f", $0) }.joined(separator: " ")))
+            }
+            _ = recorder.stop()
+            state.resetLevels()
+            state.phase = .idle
+            Log.log("METER TEST done (recording discarded)")
+        }
     }
 
     /// Full pipeline minus mic + injection: fixture WAV → ASR → Ollama →

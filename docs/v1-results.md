@@ -112,6 +112,47 @@ grant from v0.
    still pastes, entry shows `cleanup failed` badge; restart Ollama, hit
    **Re-clean** on that row → badge flips to `done`.
 
+## Live audio-level meter (post-v1 polish)
+
+The listening state now shows a **live rolling level histogram** instead of the
+mock pulsing dots: 7 thin white bars (3 pt wide, 3–16 pt tall) whose heights
+follow the last 7 smoothed mic levels, newest on the right, ~30 Hz updates.
+
+- **Level source:** computed in the *existing* AudioRecorder input tap (no
+  second tap), per converted buffer: RMS → dB → normalized over a −50…−10 dB
+  window (quiet speech still registers), with asymmetric smoothing (attack
+  0.6, decay 0.2 — lively onset, no inter-word jitter). Tap buffer size dropped
+  4096 → 1600 frames (~33 ms ≈ 30 Hz).
+- **Threading:** the tap callback runs on the audio thread; the coordinator
+  hops to main (`DispatchQueue.main.async`) before touching the `@Published`
+  `audioLevel` / `levelHistory` on `PillState`.
+- **Teardown:** `resetLevels()` on stop + `pushLevel` guards on
+  `phase == .listening` (drops stragglers queued on main), and the phase
+  change swaps the meter view out entirely — no frozen bars.
+- Idle (faint dots) and processing (sweep) are unchanged; `PulsingDots` removed.
+
+**Verified** via a dev hook (`meterTest`: standalone recorder drives the meter
+for 6 s, logs levels, discards audio — nothing transcribed/injected/persisted):
+
+Ambient silence — bars low and flat:
+```
+METER TEST level[00] = 0.000 (bars: 0.00 0.00 0.00 0.00 0.00 0.00 0.00)
+METER TEST level[08] = 0.005 (bars: 0.02 0.01 0.01 0.01 0.01 0.01 0.00)
+```
+Spoken audio (`say` through unmuted speakers) — bars rise and move:
+```
+METER TEST level[01] = 0.452 (bars: 0.45 0.42 0.38 0.43 0.40 0.48 0.45)
+METER TEST level[08] = 0.405 (bars: 0.21 0.19 0.32 0.28 0.31 0.47 0.41)
+```
+Screenshots: `/tmp/pill-meter-silence.png`, `/tmp/pill-meter-speech.png`,
+`/tmp/pill-meter-after.png` (idle dots restored — clean teardown). Output
+volume was unmuted for the `say` stimulus and re-muted afterward.
+
+**Manual check for John:** click the pill and talk — bars should track your
+voice rhythm noticeably (close-mic speech will drive them higher than the
+speaker-playback test did). If they feel too shy/too hot, tune `dbFloor` /
+`dbCeiling` in `AudioRecorder`.
+
 ## Notes / deviations
 
 - History currently contains 4 test entries from the automated checks (one

@@ -19,7 +19,27 @@ enum PillPhase {
 }
 
 final class PillState: ObservableObject {
+    /// Number of bars in the listening-state level meter.
+    static let historyLength = 7
+
     @Published var phase: PillPhase = .idle
+    /// Live mic level 0..1 (dB-mapped, smoothed in AudioRecorder).
+    @Published var audioLevel: Float = 0
+    /// Rolling window of recent levels — the listening histogram, newest last.
+    @Published var levelHistory: [Float] = Array(repeating: 0, count: PillState.historyLength)
+
+    func pushLevel(_ level: Float) {
+        // Ignore stragglers queued on main after recording stopped.
+        guard phase == .listening else { return }
+        audioLevel = level
+        levelHistory.removeFirst()
+        levelHistory.append(level)
+    }
+
+    func resetLevels() {
+        audioLevel = 0
+        levelHistory = Array(repeating: 0, count: Self.historyLength)
+    }
 }
 
 // MARK: - Hosting view (first-mouse fix)
@@ -139,7 +159,7 @@ struct PillView: View {
         case .idle:
             StaticDots()
         case .listening:
-            PulsingDots()
+            LevelMeterBars(levels: state.levelHistory)
         case .processing:
             SweepDot()
         }
@@ -162,25 +182,29 @@ private struct StaticDots: View {
     }
 }
 
-private struct PulsingDots: View {
-    @State private var pulsing = false
+/// Listening: a live rolling audio-level histogram — 7 thin vertical bars
+/// whose heights follow the recent mic levels (newest on the right). Silence
+/// = low flat bars; speech = bars rise. Levels are reset on stop, and the
+/// phase change swaps this view out entirely, so no frozen bars.
+private struct LevelMeterBars: View {
+    let levels: [Float]
+
+    private static let barWidth: CGFloat = 3
+    private static let minHeight: CGFloat = 3
+    private static let maxHeight: CGFloat = 16
 
     var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<4, id: \.self) { index in
-                Circle()
-                    .fill(Color.white.opacity(0.95))
-                    .frame(width: 4, height: 4)
-                    .scaleEffect(pulsing ? 1.9 : 1.0)
-                    .animation(
-                        .easeInOut(duration: 0.45)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.12),
-                        value: pulsing
+        HStack(spacing: 4) {
+            ForEach(levels.indices, id: \.self) { index in
+                Capsule()
+                    .fill(Color.white.opacity(0.92))
+                    .frame(
+                        width: Self.barWidth,
+                        height: Self.minHeight + CGFloat(levels[index]) * (Self.maxHeight - Self.minHeight)
                     )
             }
         }
-        .onAppear { pulsing = true }
+        .animation(.linear(duration: 0.08), value: levels)
     }
 }
 

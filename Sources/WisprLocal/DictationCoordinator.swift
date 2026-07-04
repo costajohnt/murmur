@@ -42,6 +42,14 @@ final class DictationCoordinator {
         targetApp = TargetAppTracker.shared.lastActiveApp
         Log.log("record start: target = \(targetApp?.bundleIdentifier ?? "none") (\(targetApp?.localizedName ?? "-"))")
 
+        // Live level → meter bars. Callback arrives on the audio thread;
+        // hop to main for the @Published updates.
+        recorder.onLevel = { [weak self] level in
+            DispatchQueue.main.async {
+                self?.pillState.pushLevel(level)
+            }
+        }
+
         Task {
             do {
                 try await recorder.start()
@@ -58,6 +66,8 @@ final class DictationCoordinator {
     private func stopAndProcess() {
         pillState.phase = .processing
         let samples = recorder.stop()
+        recorder.onLevel = nil
+        pillState.resetLevels()
         let durationMs = recordStart.map { Int(Date().timeIntervalSince($0) * 1000) }
         recordStart = nil
         Log.log("record stop: \(samples.count) samples (\(String(format: "%.2f", Double(samples.count) / AudioRecorder.sampleRate))s)")
