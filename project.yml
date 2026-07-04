@@ -1,0 +1,43 @@
+name: WisprLocal
+options:
+  bundleIdPrefix: com.costajohnt
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    exactVersion: 0.15.4
+
+targets:
+  WisprLocal:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Tests/fixtures/fixture.wav
+        buildPhase: resources
+    dependencies:
+      - package: FluidAudio
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleName: WisprLocal
+        CFBundleDisplayName: WisprLocal
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "wispr-local transcribes your speech locally."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.costajohnt.wisprlocal
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Development"
+        # NOTE: the team ID is the cert's OU (554J63A469), NOT the "([redacted])"
+        # suffix in the cert CN — that's the certificate-holder ID. Using
+        # [redacted] here makes xcodebuild fail with "No signing certificate
+        # 'Mac Development' found".
+        DEVELOPMENT_TEAM: 554J63A469
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"

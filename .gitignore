@@ -28,4 +28,5 @@ Models/
 
 # Local scratch
 *.wav
+!Tests/fixtures/*.wav
 scratch/
