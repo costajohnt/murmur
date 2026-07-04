@@ -25,7 +25,9 @@ targets:
       properties:
         CFBundleName: WisprLocal
         CFBundleDisplayName: WisprLocal
-        LSUIElement: true
+        # Regular app (no LSUIElement): dock icon + app switcher + real main
+        # menu. Closing the History window keeps the pill/menubar running; only
+        # ⌘Q quits (docs/pill-app-redesign.md §A).
         NSMicrophoneUsageDescription: "wispr-local transcribes your speech locally."
     settings:
       base:

@@ -30,6 +30,16 @@ struct WisprLocalApp: App {
                 NSApp.terminate(nil)
             }
         }
+        // Regular-app main menu (post-LSUIElement): bind ⌘, app-wide so the
+        // standard Settings shortcut works while any window is focused.
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.openSettings()
+                }
+                .keyboardShortcut(",")
+            }
+        }
     }
 }
 
@@ -46,6 +56,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DictationCoordinator.shared.preloadAsr()
         // No-op unless the user enabled the hotkey in Settings (default off).
         HotkeyManager.shared.apply()
+        // Regular app now: opening the app shows the History window as the
+        // main window (docs/pill-app-redesign.md §A).
+        openHistory()
+    }
+
+    /// Dock-icon click (or app reopen) with no visible windows → re-show the
+    /// History window. The pill/menubar keep running either way.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Log.log("app reopen (visible windows = \(flag))")
+        if !flag {
+            openHistory()
+        }
+        return true
+    }
+
+    /// Closing the last window must NOT quit — the pill and menubar stay
+    /// until ⌘Q (docs/pill-app-redesign.md §A).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     func showPill() {
@@ -139,7 +168,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         center.addObserver(forName: .init("com.costajohnt.wisprlocal.pillFrame"), object: nil, queue: .main) { [weak self] _ in
             guard let self, let panel = self.pillPanel, let screen = NSScreen.main else { return }
-            Log.log("test hook: pillFrame = \(NSStringFromRect(panel.frame)), screenFrame = \(NSStringFromRect(screen.frame))")
+            Log.log("test hook: pillFrame = \(NSStringFromRect(panel.frame)), window id = \(panel.windowNumber), screenFrame = \(NSStringFromRect(screen.frame))")
+        }
+        // Pill-redesign hooks:
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.cancelTest"), object: nil, queue: .main) { _ in
+            Log.log("test hook: cancelTest triggered")
+            V1TestHooks.runCancelTest()
+        }
+        center.addObserver(forName: .init("com.costajohnt.wisprlocal.mainMenu"), object: nil, queue: .main) { _ in
+            let titles = NSApp.mainMenu?.items.map(\.title) ?? []
+            Log.log("MAIN MENU: policy = \(NSApp.activationPolicy().rawValue) (0 = regular), items = \(titles)")
         }
         // v1 hooks:
         center.addObserver(forName: .init("com.costajohnt.wisprlocal.ollamaTest"), object: nil, queue: .main) { _ in
@@ -258,6 +296,25 @@ enum V1TestHooks {
             audioPath: audioPath
         )
         Log.log("HISTORY CHECK: inserted entry (\(text.count) chars, audio: \(audioPath != nil)), count now \(store.count())")
+    }
+
+    /// Cancel-path check (docs/pill-app-redesign.md): start a real recording,
+    /// cancel it, and prove no history entry was created and the phase is
+    /// back to idle. Mic is captured for ~1.5 s; nothing is transcribed,
+    /// injected, or persisted.
+    static func runCancelTest() {
+        Task { @MainActor in
+            let store = HistoryStore.shared
+            let before = store?.count() ?? -1
+            let coordinator = DictationCoordinator.shared
+            coordinator.pillTapped() // start recording
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            Log.log("CANCEL TEST: phase after start = \(coordinator.pillState.phase)")
+            coordinator.cancel()
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let after = store?.count() ?? -1
+            Log.log("CANCEL TEST: history count \(before) -> \(after) (no new entry = \(before == after)), phase = \(coordinator.pillState.phase)")
+        }
     }
 
     /// Logs the live resolved settings + model so overrides can be verified

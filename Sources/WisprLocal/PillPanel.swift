@@ -4,10 +4,23 @@ import SwiftUI
 // MARK: - Metrics
 
 enum PillMetrics {
-    /// Wispr Flow-style lozenge: distinctly wider than tall.
-    static let width: CGFloat = 120
-    static let height: CGFloat = 26
-    static let bottomMargin: CGFloat = 24
+    /// Idle: tiny, unobtrusive — just the four faint dots.
+    static let idleWidth: CGFloat = 60
+    static let idleHeight: CGFloat = 20
+    /// Active (listening/processing): expands to ✕ | waveform | ✓.
+    static let activeWidth: CGFloat = 150
+    static let activeHeight: CGFloat = 32
+    /// The panel itself stays a fixed size that fits both shapes (plus spring
+    /// overshoot); the SwiftUI capsule animates inside it. Animating the
+    /// NSPanel frame instead would fight the non-activating first-mouse setup.
+    static let panelWidth: CGFloat = 170
+    static let panelHeight: CGFloat = 44
+    /// Hit-region width for the ✕ (left) and ✓ (right) ends of the active
+    /// capsule; the middle (meter) is not a click target.
+    static let buttonRegion: CGFloat = 44
+    /// Diameter of the ✕ / ✓ circles.
+    static let circleSize: CGFloat = 22
+    static let bottomMargin: CGFloat = 18
 }
 
 // MARK: - State
@@ -68,14 +81,19 @@ final class PillPanel: NSPanel {
     private let pillState = DictationCoordinator.shared.pillState
 
     init() {
-        let size = NSSize(width: PillMetrics.width, height: PillMetrics.height)
+        let size = NSSize(width: PillMetrics.panelWidth, height: PillMetrics.panelHeight)
         super.init(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
         )
-        level = .statusBar
+        // Above .statusBar deliberately: the real Wispr Flow app keeps an
+        // invisible-but-clickable "Status" overlay at CGWindowLevel 1000 over
+        // bottom-center, which intercepted clicks on our pill's right side
+        // (✓ button) when we sat at .statusBar. One level above screensaver
+        // guarantees the pill wins the hit-test whenever it's visible.
+        level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         isFloatingPanel = true
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -89,20 +107,49 @@ final class PillPanel: NSPanel {
         contentView = host
 
         // Single canonical click path at the AppKit layer: a gesture recognizer
-        // on the hosting view. The SwiftUI content is purely visual, so there is
-        // no SwiftUI Button competing for (or swallowing) the first-mouse event.
-        let click = NSClickGestureRecognizer(target: self, action: #selector(pillClicked))
+        // on the hosting view with LOCATION-BASED hit-testing (✕ left / ✓
+        // right while active). The SwiftUI content stays purely visual — no
+        // SwiftUI Button competing for (or swallowing) the first-mouse event,
+        // which is the proven-with-real-clicks arrangement from Spike B
+        // (docs/pill-app-redesign.md "click handling" fallback).
+        let click = NSClickGestureRecognizer(target: self, action: #selector(pillClicked(_:)))
         host.addGestureRecognizer(click)
 
         positionBottomCenter()
     }
 
-    @objc private func pillClicked() {
+    @objc private func pillClicked(_ recognizer: NSClickGestureRecognizer) {
+        guard let view = contentView else { return }
+        let x = recognizer.location(in: view).x
         // Spike B evidence line kept for regression checks: at click time,
         // frontmost must be the user's app, NOT WisprLocal.
         let front = NSWorkspace.shared.frontmostApplication
-        Log.log("PILL CLICK: frontmostApplication = \(front?.bundleIdentifier ?? "nil") (\(front?.localizedName ?? "nil"))")
-        DictationCoordinator.shared.pillTapped()
+        Log.log("PILL CLICK: x = \(Int(x)), frontmostApplication = \(front?.bundleIdentifier ?? "nil") (\(front?.localizedName ?? "nil"))")
+
+        let mid = view.bounds.width / 2
+        switch pillState.phase {
+        case .idle:
+            // Whole tiny capsule (plus a little slop) starts recording.
+            if abs(x - mid) <= PillMetrics.idleWidth / 2 + 8 {
+                DictationCoordinator.shared.pillTapped()
+            } else {
+                Log.log("PILL CLICK: outside idle capsule, ignored")
+            }
+        case .listening:
+            let capMinX = mid - PillMetrics.activeWidth / 2
+            let capMaxX = mid + PillMetrics.activeWidth / 2
+            if x >= capMinX - 4 && x < capMinX + PillMetrics.buttonRegion {
+                Log.log("PILL CLICK: cancel (✕)")
+                DictationCoordinator.shared.cancel()
+            } else if x > capMaxX - PillMetrics.buttonRegion && x <= capMaxX + 4 {
+                Log.log("PILL CLICK: confirm (✓)")
+                DictationCoordinator.shared.pillTapped()
+            } else {
+                Log.log("PILL CLICK: center/outside region ignored while listening")
+            }
+        case .processing:
+            Log.log("pipeline: click ignored (processing)")
+        }
     }
 
     private func positionBottomCenter() {
@@ -132,6 +179,9 @@ private struct VisualEffectBlur: NSViewRepresentable {
 struct PillView: View {
     @ObservedObject var state: PillState
 
+    /// Listening AND processing use the expanded shape; only idle is tiny.
+    private var isExpanded: Bool { state.phase != .idle }
+
     var body: some View {
         ZStack {
             VisualEffectBlur()
@@ -141,8 +191,13 @@ struct PillView: View {
         }
         .clipShape(Capsule())
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-        .frame(width: PillMetrics.width, height: PillMetrics.height)
-        .contentShape(Capsule())
+        .frame(
+            width: isExpanded ? PillMetrics.activeWidth : PillMetrics.idleWidth,
+            height: isExpanded ? PillMetrics.activeHeight : PillMetrics.idleHeight
+        )
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isExpanded)
+        // Center the animating capsule in the fixed-size panel.
+        .frame(width: PillMetrics.panelWidth, height: PillMetrics.panelHeight)
     }
 
     private var tintOpacity: Double {
@@ -159,10 +214,43 @@ struct PillView: View {
         case .idle:
             StaticDots()
         case .listening:
-            LevelMeterBars(levels: state.levelHistory)
+            ListeningControls(levels: state.levelHistory)
         case .processing:
             SweepDot()
         }
+    }
+}
+
+/// Active pill content: ✕ cancel (left, subtle dark circle) | live meter |
+/// ✓ confirm (right, prominent white circle). The circles are VISUAL ONLY —
+/// clicks are routed by the panel's location-based hit-test, so nothing here
+/// competes for the first-mouse event.
+private struct ListeningControls: View {
+    let levels: [Float]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: PillMetrics.circleSize, height: PillMetrics.circleSize)
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+            Spacer(minLength: 4)
+            LevelMeterBars(levels: levels)
+            Spacer(minLength: 4)
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: PillMetrics.circleSize, height: PillMetrics.circleSize)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.black)
+            }
+        }
+        .padding(.horizontal, 5)
     }
 }
 

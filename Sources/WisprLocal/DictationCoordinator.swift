@@ -34,6 +34,23 @@ final class DictationCoordinator {
         }
     }
 
+    /// ✕ on the active pill: stop and DISCARD the in-progress recording — no
+    /// ASR, no cleanup, no injection, no history entry — straight back to
+    /// idle (docs/pill-app-redesign.md §B).
+    func cancel() {
+        guard pillState.phase == .listening else {
+            Log.log("pipeline: cancel ignored (phase \(pillState.phase))")
+            return
+        }
+        let samples = recorder.stop()
+        recorder.onLevel = nil
+        pillState.resetLevels()
+        recordStart = nil
+        targetApp = nil
+        pillState.phase = .idle
+        Log.log("record cancel: discarded \(samples.count) samples, nothing processed or persisted")
+    }
+
     // MARK: - Phases
 
     private func startListening() {
