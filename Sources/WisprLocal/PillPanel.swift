@@ -6,10 +6,11 @@ import SwiftUI
 enum PillMetrics {
     /// Idle: tiny, empty, near-transparent — a barely-there lozenge.
     static let idleWidth: CGFloat = 40
-    static let idleHeight: CGFloat = 7
-    /// Idle tint/border are dropped near to invisible — just enough for the
-    /// blur to read as a shape at rest.
-    static let idleTintOpacity: Double = 0.04
+    static let idleHeight: CGFloat = 10
+    /// Every state is a translucent BLACK lozenge (no gray hudWindow frost) —
+    /// idle is the most see-through; expanded is a touch more opaque so the
+    /// meter and ✕/✓ read. Border stays near-invisible.
+    static let idleTintOpacity: Double = 0.30
     static let idleBorderOpacity: Double = 0.05
     /// Extra horizontal slop added to the idle capsule's half-width when
     /// hit-testing a click — the thin/narrow idle pill needs a generous
@@ -171,19 +172,6 @@ final class PillPanel: NSPanel {
 
 // MARK: - Views
 
-/// Real behind-window blur for the capsule background (not just opacity).
-private struct VisualEffectBlur: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
-
 struct PillView: View {
     @ObservedObject var state: PillState
 
@@ -192,8 +180,8 @@ struct PillView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectBlur()
-            // Dark tint over the blur; lightens a touch while active.
+            // Uniform translucent-BLACK fill for every state — no gray
+            // hudWindow frost. Idle and expanded share the same styling.
             Capsule().fill(Color.black.opacity(tintOpacity))
             phaseContent
         }
@@ -210,9 +198,9 @@ struct PillView: View {
 
     private var tintOpacity: Double {
         switch state.phase {
-        case .idle: return PillMetrics.idleTintOpacity   // barely-there at rest
-        case .listening: return 0.20
-        case .processing: return 0.28
+        case .idle: return PillMetrics.idleTintOpacity   // most see-through at rest
+        case .listening: return 0.42
+        case .processing: return 0.48
         }
     }
 
