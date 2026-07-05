@@ -125,6 +125,26 @@ final class PillPanel: NSPanel {
         host.addGestureRecognizer(click)
 
         positionBottomCenter()
+
+        // A4: the pill anchors to NSScreen.main. If the display config changes
+        // (screen added/removed, resolution/arrangement change) the old main
+        // screen — and the pill with it — can end up off-screen. Re-anchor to
+        // the current main screen whenever the parameters change.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func screenParametersChanged(_ note: Notification) {
+        Log.log("pill: screen parameters changed, repositioning to current main screen")
+        positionBottomCenter()
     }
 
     @objc private func pillClicked(_ recognizer: NSClickGestureRecognizer) {

@@ -239,55 +239,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// scripting. DEBUG-only — these are system-wide observers any local
     /// process could post to (mic capture, injection, history mutation), so
     /// they must never exist in a release build. Example:
-    ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.wisprlocal.spikeA"), object: nil, userInfo: nil, deliverImmediately: true)'
+    ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.murmur.spikeA"), object: nil, userInfo: nil, deliverImmediately: true)'
     private func registerTestHooks() {
         let center = DistributedNotificationCenter.default()
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.spikeA"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.spikeA"), object: nil, queue: .main) { _ in
             Log.log("test hook: spikeA triggered")
             SpikeA.run()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.spikeC"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.spikeC"), object: nil, queue: .main) { _ in
             Log.log("test hook: spikeC triggered")
             SpikeC.run()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.pillFrame"), object: nil, queue: .main) { [weak self] _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.pillFrame"), object: nil, queue: .main) { [weak self] _ in
             guard let self, let panel = self.pillPanel, let screen = NSScreen.main else { return }
             Log.log("test hook: pillFrame = \(NSStringFromRect(panel.frame)), window id = \(panel.windowNumber), screenFrame = \(NSStringFromRect(screen.frame))")
         }
         // Pill-redesign hooks:
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.cancelTest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.cancelTest"), object: nil, queue: .main) { _ in
             Log.log("test hook: cancelTest triggered")
             V1TestHooks.runCancelTest()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.guardTest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.guardTest"), object: nil, queue: .main) { _ in
             Log.log("test hook: guardTest triggered")
             V1TestHooks.runGuardTest()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.mainMenu"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.mainMenu"), object: nil, queue: .main) { _ in
             let titles = NSApp.mainMenu?.items.map(\.title) ?? []
             Log.log("MAIN MENU: policy = \(NSApp.activationPolicy().rawValue) (0 = regular), items = \(titles)")
         }
         // v1 hooks:
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.ollamaTest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.ollamaTest"), object: nil, queue: .main) { _ in
             Log.log("test hook: ollamaTest triggered")
             V1TestHooks.runOllamaChecks()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyTest"), object: nil, queue: .main) { note in
+        center.addObserver(forName: .init("com.costajohnt.murmur.historyTest"), object: nil, queue: .main) { note in
             Log.log("test hook: historyTest triggered")
             V1TestHooks.runHistoryCheck(customText: note.object as? String)
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyCount"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.historyCount"), object: nil, queue: .main) { _ in
             V1TestHooks.logHistoryState()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.pipelineFixture"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.pipelineFixture"), object: nil, queue: .main) { _ in
             Log.log("test hook: pipelineFixture triggered")
             V1TestHooks.runPipelineOnFixture()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.meterTest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.meterTest"), object: nil, queue: .main) { _ in
             Log.log("test hook: meterTest triggered")
             V1TestHooks.runMeterTest()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.historyDeleteNewest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.historyDeleteNewest"), object: nil, queue: .main) { _ in
             guard let store = HistoryStore.shared, let newest = store.newest() else {
                 Log.log("DELETE CHECK: no entry to delete")
                 return
@@ -298,27 +298,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let audioGone = audioPath.map { !FileManager.default.fileExists(atPath: $0) } ?? true
             Log.log("DELETE CHECK: count \(before) -> \(store.count()), audio file removed = \(audioGone) (path: \(audioPath ?? "none"))")
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.openHistory"), object: nil, queue: .main) { [weak self] note in
+        center.addObserver(forName: .init("com.costajohnt.murmur.openHistory"), object: nil, queue: .main) { [weak self] note in
             let appearance = note.object as? String
             Log.log("test hook: openHistory (\(appearance ?? "system"))")
             self?.openHistory(appearance: appearance)
         }
         // Settings hooks:
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.openSettings"), object: nil, queue: .main) { [weak self] note in
+        center.addObserver(forName: .init("com.costajohnt.murmur.openSettings"), object: nil, queue: .main) { [weak self] note in
             let appearance = note.object as? String
             Log.log("test hook: openSettings (\(appearance ?? "system"))")
             self?.openSettings(appearance: appearance)
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.settingsStatus"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.settingsStatus"), object: nil, queue: .main) { _ in
             Log.log("test hook: settingsStatus triggered")
             V1TestHooks.logSettingsStatus()
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.hotkeyApply"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.hotkeyApply"), object: nil, queue: .main) { _ in
             Log.log("test hook: hotkeyApply triggered")
             HotkeyManager.shared.apply()
             Log.log("HOTKEY STATE: registered = \(HotkeyManager.shared.registeredBinding?.rawValue ?? "none")")
         }
-        center.addObserver(forName: .init("com.costajohnt.wisprlocal.loginToggleTest"), object: nil, queue: .main) { _ in
+        center.addObserver(forName: .init("com.costajohnt.murmur.loginToggleTest"), object: nil, queue: .main) { _ in
             Log.log("test hook: loginToggleTest triggered")
             V1TestHooks.runLoginToggleTest()
         }
@@ -429,7 +429,7 @@ enum V1TestHooks {
     }
 
     /// Logs the live resolved settings + model so overrides can be verified
-    /// against the real app defaults (`defaults write com.costajohnt.wisprlocal …`).
+    /// against the real app defaults (`defaults write com.costajohnt.murmur …`).
     static func logSettingsStatus() {
         Task {
             let model = await OllamaClient().resolveModel()

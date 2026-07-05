@@ -17,6 +17,11 @@ final class DictationCoordinator {
     private var asrManager: AsrManager?
     private var targetApp: NSRunningApplication?
     private var recordStart: Date?
+    /// N2: auto-opening Setup on an Accessibility-missing paste failure should
+    /// fire at most once per app session — otherwise the window re-pops on
+    /// every dictation attempt while permission stays ungranted. The menubar
+    /// "Setup…" item and first-run onboarding are unaffected.
+    private var didAutoOpenOnboarding = false
 
     private init() {}
 
@@ -213,26 +218,39 @@ final class DictationCoordinator {
         }
 
         // 3. Inject into the snapshotted target.
-        Log.log("pipeline inject: target = \(target?.bundleIdentifier ?? "none")")
-        let injectStatus = status
-        TextInjector.inject(cleaned, into: target) { ok, error in
-            Task { @MainActor in
-                if ok {
-                    // A fully clean run clears any prior warning. Don't clear on
-                    // a cleanup-failed run — that warning must stay visible even
-                    // though the raw text pasted fine.
-                    if injectStatus == .done {
-                        AppStatus.shared.clearError()
+        if let target, target.isTerminated {
+            // A3: the target was snapshotted at record-start; after ASR +
+            // cleanup it may have quit. Pasting now would land ⌘V in whatever
+            // is frontmost, so skip injection entirely. The transcript is still
+            // saved to history below.
+            Log.log("pipeline inject SKIPPED: target \(target.bundleIdentifier ?? "?") has quit before paste")
+            AppStatus.shared.report("The app you were dictating into has closed, so the text wasn't inserted. It's saved in History.")
+        } else {
+            Log.log("pipeline inject: target = \(target?.bundleIdentifier ?? "none")")
+            let injectStatus = status
+            TextInjector.inject(cleaned, into: target) { [weak self] ok, error in
+                Task { @MainActor in
+                    if ok {
+                        // A fully clean run clears any prior warning. Don't clear on
+                        // a cleanup-failed run — that warning must stay visible even
+                        // though the raw text pasted fine.
+                        if injectStatus == .done {
+                            AppStatus.shared.clearError()
+                        }
+                        return
                     }
-                    return
-                }
-                if AXIsProcessTrusted() {
-                    AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
-                } else {
-                    // The dominant paste failure: Accessibility never granted.
-                    // Surface it AND pop the setup guide so the user can fix it.
-                    AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
-                    (NSApp.delegate as? AppDelegate)?.openOnboarding()
+                    if AXIsProcessTrusted() {
+                        AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
+                    } else {
+                        // The dominant paste failure: Accessibility never granted.
+                        // Surface it AND pop the setup guide so the user can fix it —
+                        // but only once per session (N2), not on every attempt.
+                        AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
+                        if self?.didAutoOpenOnboarding != true {
+                            self?.didAutoOpenOnboarding = true
+                            (NSApp.delegate as? AppDelegate)?.openOnboarding()
+                        }
+                    }
                 }
             }
         }
