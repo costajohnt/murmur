@@ -1,0 +1,27 @@
+Murmur
+Copyright (c) 2026 John Costa
+
+This product includes software and models developed by third parties:
+
+FluidAudio
+  https://github.com/FluidInference/FluidAudio
+  Copyright FluidInference
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use those files except in compliance with the License.
+  You may obtain a copy of the License at
+      http://www.apache.org/licenses/LICENSE-2.0
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+NVIDIA Parakeet TDT (speech-to-text model)
+  Downloaded at runtime by FluidAudio; NOT bundled with this application.
+  Model: nvidia/parakeet-tdt-0.6b (CoreML conversion via FluidInference)
+  Licensed under Creative Commons Attribution 4.0 International (CC-BY-4.0)
+      https://creativecommons.org/licenses/by/4.0/
+  Attribution: NVIDIA Corporation.
+
+Cleanup LLMs (served by the user's local Ollama; NOT bundled)
+  Each model carries its own license, accepted by the user when pulling it
+  via Ollama (e.g. Llama 3.2: Meta Llama Community License;
+  Qwen2.5-7B: Apache-2.0).

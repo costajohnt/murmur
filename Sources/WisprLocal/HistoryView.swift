@@ -225,7 +225,12 @@ private struct TranscriptRow: View {
                 entry.cleanedText = cleaned
                 entry.modelName = model
                 entry.status = .done
+                // Transcript content is DEBUG-only (docs/release-prep.md C2).
+                #if DEBUG
                 Log.log("history re-clean OK (\(model)): \"\(cleaned)\"")
+                #else
+                Log.log("history re-clean OK (\(model)): \(cleaned.count) chars")
+                #endif
             } catch {
                 entry.status = .cleanupFailed
                 Log.log("history re-clean FAILED: \(error.localizedDescription)")

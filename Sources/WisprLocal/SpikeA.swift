@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import FluidAudio
 
@@ -48,3 +49,4 @@ enum SpikeA {
         Log.log(String(format: "SPIKE A: confidence = %.3f", result.confidence))
     }
 }
+#endif

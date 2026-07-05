@@ -3,11 +3,11 @@ import ServiceManagement
 import SwiftUI
 
 @main
-struct WisprLocalApp: App {
+struct MurmurApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("WisprLocal", systemImage: "waveform.circle") {
+        MenuBarExtra("Murmur", systemImage: "waveform.circle") {
             Button("Open History…") {
                 appDelegate.openHistory()
             }
@@ -15,6 +15,9 @@ struct WisprLocalApp: App {
                 appDelegate.openSettings()
             }
             .keyboardShortcut(",")
+            #if DEBUG
+            // Dev-only spike triggers — compiled out of release builds
+            // (docs/release-prep.md C1).
             Divider()
             Button("Spike A: transcribe fixture") {
                 SpikeA.run()
@@ -22,9 +25,10 @@ struct WisprLocalApp: App {
             Button("Spike B: show floating pill") {
                 appDelegate.showPill()
             }
-            Button("Spike C: inject 'hello from wispr-local' (3s delay)") {
+            Button("Spike C: inject test string (3s delay)") {
                 SpikeC.run()
             }
+            #endif
             Divider()
             Button("Quit") {
                 NSApp.terminate(nil)
@@ -49,10 +53,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.log("WisprLocal launched (pid \(ProcessInfo.processInfo.processIdentifier))")
+        Log.log("Murmur launched (pid \(ProcessInfo.processInfo.processIdentifier))")
         _ = TargetAppTracker.shared // start tracking activations immediately
         showPill()
+        #if DEBUG
+        // Dev-only: system-wide DistributedNotificationCenter hooks that can
+        // trigger recording/injection/history mutation. NEVER registered in
+        // release builds (docs/release-prep.md C1) — any local process could
+        // post these notifications.
         registerTestHooks()
+        #endif
         DictationCoordinator.shared.preloadAsr()
         // No-op unless the user enabled the hotkey in Settings (default off).
         HotkeyManager.shared.apply()
@@ -97,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "wispr-local History"
+            window.title = "Murmur — History"
             window.contentView = NSHostingView(
                 rootView: HistoryView().modelContainer(store.container)
             )
@@ -109,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    #if DEBUG
     /// Test-only: force the history window's appearance ("light"/"dark"/nil
     /// = follow system) so both modes can be screenshot-verified.
     func openHistory(appearance: String?) {
@@ -119,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default: historyWindow?.appearance = nil
         }
     }
+    #endif
 
     func openSettings() {
         if settingsWindow == nil {
@@ -128,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "wispr-local Settings"
+            window.title = "Murmur — Settings"
             window.contentView = NSHostingView(rootView: SettingsView())
             window.center()
             window.isReleasedWhenClosed = false
@@ -139,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.log("settings window shown")
     }
 
+    #if DEBUG
     /// Test-only: force the settings window's appearance for screenshots.
     func openSettings(appearance: String?) {
         openSettings()
@@ -151,10 +164,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.log("settings window id = \(window.windowNumber), frame = \(NSStringFromRect(window.frame))")
         }
     }
+    #endif
 
+    #if DEBUG
     /// Headless test hooks (dev only): trigger flows from the command line via
     /// distributed notifications so evidence can be captured without GUI
-    /// scripting. Example:
+    /// scripting. DEBUG-only — these are system-wide observers any local
+    /// process could post to (mic capture, injection, history mutation), so
+    /// they must never exist in a release build. Example:
     ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.wisprlocal.spikeA"), object: nil, userInfo: nil, deliverImmediately: true)'
     private func registerTestHooks() {
         let center = DistributedNotificationCenter.default()
@@ -239,8 +256,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             V1TestHooks.runLoginToggleTest()
         }
     }
+    #endif
 }
 
+#if DEBUG
 /// Dev-only automated checks for the v1 acceptance criteria that don't need
 /// mic/Accessibility: Ollama cleanup behavior, SwiftData persistence, and the
 /// ASR→cleanup→persist integration on the bundled fixture.
@@ -452,3 +471,4 @@ enum V1TestHooks {
         }
     }
 }
+#endif

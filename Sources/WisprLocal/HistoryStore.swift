@@ -55,7 +55,8 @@ final class Dictation {
 /// SwiftData-backed history with a naive retention policy:
 /// keep the newest `maxEntries`, delete audio files older than
 /// `audioRetentionDays`. Store + audio live under
-/// ~/Library/Application Support/wispr-local/.
+/// ~/Library/Application Support/Murmur/ (auto-migrated from the pre-rename
+/// wispr-local/ directory on first launch).
 @MainActor
 final class HistoryStore {
     static let maxEntries = 200
@@ -75,6 +76,13 @@ final class HistoryStore {
 
     static var supportDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Murmur", isDirectory: true)
+    }
+
+    /// Pre-rename data directory (the app shipped its early life as
+    /// "wispr-local"). Migrated once by `migrateLegacyDataIfNeeded()`.
+    static var legacySupportDir: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("wispr-local", isDirectory: true)
     }
 
@@ -82,11 +90,64 @@ final class HistoryStore {
         supportDir.appendingPathComponent("audio", isDirectory: true)
     }
 
+    /// One-time rename migration: if the old wispr-local data dir exists and
+    /// no Murmur store exists yet, move the whole dir so existing dictations
+    /// (SwiftData store + audio) carry over. Audio paths stored in old
+    /// entries still point at the wispr-local path, so `relinkAudioPaths`
+    /// rewrites them after the store opens.
+    private static func migrateLegacyDataIfNeeded() {
+        let fm = FileManager.default
+        let newStore = supportDir.appendingPathComponent("history.store")
+        guard !fm.fileExists(atPath: newStore.path),
+              fm.fileExists(atPath: legacySupportDir.path)
+        else { return }
+        do {
+            // The new dir may already exist (e.g. debug.log written first);
+            // move contents item-by-item in that case, else move the dir.
+            if fm.fileExists(atPath: supportDir.path) {
+                for item in try fm.contentsOfDirectory(atPath: legacySupportDir.path) {
+                    try fm.moveItem(
+                        at: legacySupportDir.appendingPathComponent(item),
+                        to: supportDir.appendingPathComponent(item)
+                    )
+                }
+                try fm.removeItem(at: legacySupportDir)
+            } else {
+                try fm.moveItem(at: legacySupportDir, to: supportDir)
+            }
+            Log.log("history: migrated legacy data wispr-local/ -> Murmur/")
+        } catch {
+            Log.log("history: legacy data migration FAILED (continuing with fresh store): \(error)")
+        }
+    }
+
+    /// Post-migration fixup: entries created pre-rename persisted absolute
+    /// `audioPath`s under .../wispr-local/audio/. Point them at the new dir
+    /// so playback/delete keep working.
+    private func relinkAudioPaths() {
+        let oldPrefix = Self.legacySupportDir.path
+        let descriptor = FetchDescriptor<Dictation>()
+        guard let all = try? context.fetch(descriptor) else { return }
+        var relinked = 0
+        for entry in all {
+            if let path = entry.audioPath, path.hasPrefix(oldPrefix) {
+                entry.audioPath = Self.supportDir.path + path.dropFirst(oldPrefix.count)
+                relinked += 1
+            }
+        }
+        if relinked > 0 {
+            save()
+            Log.log("history: relinked \(relinked) audio paths to the Murmur dir")
+        }
+    }
+
     private init() throws {
+        Self.migrateLegacyDataIfNeeded()
         try FileManager.default.createDirectory(at: Self.audioDir, withIntermediateDirectories: true)
         let storeURL = Self.supportDir.appendingPathComponent("history.store")
         let config = ModelConfiguration(url: storeURL)
         container = try ModelContainer(for: Dictation.self, configurations: config)
+        relinkAudioPaths()
     }
 
     @discardableResult

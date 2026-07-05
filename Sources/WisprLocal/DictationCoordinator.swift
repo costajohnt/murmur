@@ -122,7 +122,13 @@ final class DictationCoordinator {
             var decoderState = try TdtDecoderState()
             let result = try await asr.transcribe(samples, decoderState: &decoderState)
             raw = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Transcript content is DEBUG-only: release builds must never
+            // write the user's words to any log (docs/release-prep.md C2).
+            #if DEBUG
             Log.log(String(format: "pipeline ASR (%.3fs): \"%@\"", Date().timeIntervalSince(asrStart), raw))
+            #else
+            Log.log(String(format: "pipeline ASR (%.3fs): %d chars", Date().timeIntervalSince(asrStart), raw.count))
+            #endif
         } catch {
             Log.log("pipeline ASR FAILED: \(error)")
             HistoryStore.shared?.add(
@@ -163,7 +169,11 @@ final class DictationCoordinator {
         // ASR "S" → "Sorry, I didn't catch that..."). Discard outright: no
         // cleanup, no inject, no history entry, and drop the orphaned WAV.
         guard TranscriptGuard.isMeaningful(raw) else {
+            #if DEBUG
             Log.log("pipeline: no meaningful speech (raw=\"\(raw)\"), discarded")
+            #else
+            Log.log("pipeline: no meaningful speech (\(raw.count) chars), discarded")
+            #endif
             if let audioPath {
                 try? FileManager.default.removeItem(atPath: audioPath)
             }
@@ -185,7 +195,11 @@ final class DictationCoordinator {
         do {
             let cleanStart = Date()
             cleaned = try await ollama.clean(raw, model: model, context: context, tone: AppSettings.tonePreset)
+            #if DEBUG
             Log.log(String(format: "pipeline cleanup (%@, %.2fs): \"%@\"", model, Date().timeIntervalSince(cleanStart), cleaned))
+            #else
+            Log.log(String(format: "pipeline cleanup (%@, %.2fs): %d chars", model, Date().timeIntervalSince(cleanStart), cleaned.count))
+            #endif
         } catch {
             status = .cleanupFailed
             Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")

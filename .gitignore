@@ -16,7 +16,7 @@ build/
 Package.resolved
 
 # Generated Xcode project (regenerated from project.yml via xcodegen)
-WisprLocal.xcodeproj/
+Murmur.xcodeproj/
 
 # Built app bundle
 *.app

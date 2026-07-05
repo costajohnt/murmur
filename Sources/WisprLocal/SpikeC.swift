@@ -1,3 +1,4 @@
+#if DEBUG
 import AppKit
 
 /// Spike C (kept as a debug menu item): paste-inject a fixed string.
@@ -18,3 +19,4 @@ enum SpikeC {
         }
     }
 }
+#endif
