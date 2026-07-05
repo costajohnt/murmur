@@ -8,7 +8,7 @@ mkdir -p build
 
 swiftc -parse-as-library \
   -target arm64-apple-macos14.0 \
-  Sources/WisprLocal/TranscriptGuard.swift \
+  Sources/Murmur/TranscriptGuard.swift \
   scripts/test-guard.swift \
   -o "$OUT"
 

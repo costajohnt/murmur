@@ -151,7 +151,7 @@ final class PillPanel: NSPanel {
         guard let view = contentView else { return }
         let x = recognizer.location(in: view).x
         // Spike B evidence line kept for regression checks: at click time,
-        // frontmost must be the user's app, NOT WisprLocal.
+        // frontmost must be the user's app, NOT Murmur.
         let front = NSWorkspace.shared.frontmostApplication
         Log.log("PILL CLICK: x = \(Int(x)), frontmostApplication = \(front?.bundleIdentifier ?? "nil") (\(front?.localizedName ?? "nil"))")
 

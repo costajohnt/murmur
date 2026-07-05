@@ -59,12 +59,12 @@ targets:
     platform: macOS
     sources:
       - path: Tests/MurmurTests
-      - path: Sources/WisprLocal/CleanupContext.swift
-      - path: Sources/WisprLocal/TranscriptGuard.swift
-      - path: Sources/WisprLocal/Log.swift
-      - path: Sources/WisprLocal/AppSettings.swift
-      - path: Sources/WisprLocal/OllamaClient.swift
-      - path: Sources/WisprLocal/HistoryStore.swift
+      - path: Sources/Murmur/CleanupContext.swift
+      - path: Sources/Murmur/TranscriptGuard.swift
+      - path: Sources/Murmur/Log.swift
+      - path: Sources/Murmur/AppSettings.swift
+      - path: Sources/Murmur/OllamaClient.swift
+      - path: Sources/Murmur/HistoryStore.swift
     settings:
       base:
         SWIFT_VERSION: "5.0"
