@@ -7,7 +7,7 @@ Goal of v0: prove the three riskiest unknowns compile, run, and behave correctly
 - **Tooling:** XcodeGen (`project.yml` → `WisprLocal.xcodeproj`). The `.xcodeproj` is git-ignored and regenerated; `project.yml` is the source of truth.
 - **Bundle id:** `com.costajohnt.wisprlocal` (stable — TCC permissions key off this + the signature).
 - **Deployment target:** macOS 14.0 (SwiftData available).
-- **Signing:** ad-hoc is fine for local dev, but prefer the installed **Apple Development** identity (`[redacted]`, team `[redacted]`) so TCC grants persist across rebuilds. `CODE_SIGN_STYLE: Manual`, `CODE_SIGN_IDENTITY: "Apple Development"`.
+- **Signing:** ad-hoc is fine for local dev, but prefer your installed **Apple Development** identity so TCC grants persist across rebuilds. `CODE_SIGN_STYLE: Manual`, `CODE_SIGN_IDENTITY: "Apple Development"`.
 - **App Sandbox: OFF.** Cross-app injection and global input require it disabled. Do not add the sandbox entitlement.
 - **Info.plist keys:** `NSMicrophoneUsageDescription` ("wispr-local transcribes your speech locally."), `LSUIElement = true` (menubar/agent app, no dock icon).
 - **Dependency:** FluidAudio via SwiftPM — `https://github.com/FluidInference/FluidAudio` (Apache-2.0). Pin to a released tag.
