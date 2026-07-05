@@ -52,6 +52,41 @@ final class Dictation {
     }
 }
 
+/// Versioned schema for the dictation history store.
+///
+/// `DictationSchemaV1` captures the `Dictation` model exactly as it ships
+/// today, so the existing on-disk store opens with no migration. This exists
+/// purely so a FUTURE model change (new/renamed/removed field) can be made
+/// safe: add a `DictationSchemaV2`, list it in `DictationMigrationPlan.schemas`,
+/// and add a `MigrationStage` describing V1 -> V2. SwiftData then migrates the
+/// user's history forward instead of silently discarding a store whose shape no
+/// longer matches the current model.
+///
+/// Do NOT edit `Dictation` in place for a schema change: mutate a copy owned by
+/// a new versioned schema and migrate to it, otherwise V1 stops matching the
+/// on-disk data and the store can be dropped.
+enum DictationSchemaV1: VersionedSchema {
+    static var versionIdentifier = Schema.Version(1, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [Dictation.self]
+    }
+}
+
+/// Ordered list of schema versions plus the migration stages between them.
+/// Today there is only V1, so the plan is a no-op that establishes the
+/// versioning machinery. Future versions append to `schemas` and add a
+/// lightweight or custom `MigrationStage` to `stages`.
+enum DictationMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] {
+        [DictationSchemaV1.self]
+    }
+
+    static var stages: [MigrationStage] {
+        []
+    }
+}
+
 /// SwiftData-backed history with a naive retention policy:
 /// keep the newest `maxEntries`, delete audio files older than
 /// `audioRetentionDays`. Store + audio live under
@@ -146,7 +181,12 @@ final class HistoryStore {
         try FileManager.default.createDirectory(at: Self.audioDir, withIntermediateDirectories: true)
         let storeURL = Self.supportDir.appendingPathComponent("history.store")
         let config = ModelConfiguration(url: storeURL)
-        container = try ModelContainer(for: Dictation.self, configurations: config)
+        let schema = Schema(versionedSchema: DictationSchemaV1.self)
+        container = try ModelContainer(
+            for: schema,
+            migrationPlan: DictationMigrationPlan.self,
+            configurations: config
+        )
         relinkAudioPaths()
     }
 
