@@ -46,3 +46,33 @@ targets:
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+  # Unit tests for pure logic (audit item A6). No host application: the
+  # SwiftUI App entry point makes @testable-importing the Murmur executable
+  # target impractical without launching the whole app (mic/hotkey/Ollama
+  # side effects). Instead the specific Foundation-only source files under
+  # test are compiled a second time directly into this bundle - they have no
+  # UI/AVFoundation/networking side effects at import time, only at call
+  # time, and the tests below never invoke the networking or mic paths.
+  MurmurTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MurmurTests
+      - path: Sources/WisprLocal/CleanupContext.swift
+      - path: Sources/WisprLocal/TranscriptGuard.swift
+      - path: Sources/WisprLocal/Log.swift
+      - path: Sources/WisprLocal/AppSettings.swift
+      - path: Sources/WisprLocal/OllamaClient.swift
+      - path: Sources/WisprLocal/HistoryStore.swift
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.costajohnt.murmur.tests
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: 554J63A469
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
