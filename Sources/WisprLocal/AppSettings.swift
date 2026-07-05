@@ -81,8 +81,17 @@ enum AppSettings {
     static let tonePresetKey = "tonePreset"
     static let hotkeyEnabledKey = "hotkeyEnabled"
     static let hotkeyBindingKey = "hotkeyBinding"
+    static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     private static var defaults: UserDefaults { .standard }
+
+    /// First-run gate for the permissions guide (docs/release-audit.md I1).
+    /// Defaults to false (unwritten key) so a fresh install shows onboarding
+    /// exactly once; set true when the user dismisses it.
+    static var hasCompletedOnboarding: Bool {
+        get { defaults.bool(forKey: hasCompletedOnboardingKey) }
+        set { defaults.set(newValue, forKey: hasCompletedOnboardingKey) }
+    }
 
     /// nil = Auto (the RAM-based resolve). Stored as "" for @AppStorage.
     static var cleanupModelOverride: String? {

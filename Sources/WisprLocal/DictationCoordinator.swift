@@ -75,6 +75,9 @@ final class DictationCoordinator {
                 Log.log("record start: engine running")
             } catch {
                 Log.log("record start FAILED: \(error.localizedDescription)")
+                // Surface mic-denied / engine failures — the pill just returns
+                // to idle otherwise (docs/release-audit.md I2).
+                AppStatus.shared.report(error.localizedDescription)
                 pillState.phase = .idle
             }
         }
@@ -131,6 +134,7 @@ final class DictationCoordinator {
             #endif
         } catch {
             Log.log("pipeline ASR FAILED: \(error)")
+            AppStatus.shared.report("Transcription failed. See history for the recording.")
             HistoryStore.shared?.add(
                 rawTranscript: "",
                 cleanedText: "",
@@ -202,12 +206,36 @@ final class DictationCoordinator {
             #endif
         } catch {
             status = .cleanupFailed
+            // Raw transcript still gets injected (existing fallback); ALSO tell
+            // the user cleanup didn't run (docs/release-audit.md I2).
+            AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
             Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
         }
 
         // 3. Inject into the snapshotted target.
         Log.log("pipeline inject: target = \(target?.bundleIdentifier ?? "none")")
-        TextInjector.inject(cleaned, into: target)
+        let injectStatus = status
+        TextInjector.inject(cleaned, into: target) { ok, error in
+            Task { @MainActor in
+                if ok {
+                    // A fully clean run clears any prior warning. Don't clear on
+                    // a cleanup-failed run — that warning must stay visible even
+                    // though the raw text pasted fine.
+                    if injectStatus == .done {
+                        AppStatus.shared.clearError()
+                    }
+                    return
+                }
+                if AXIsProcessTrusted() {
+                    AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
+                } else {
+                    // The dominant paste failure: Accessibility never granted.
+                    // Surface it AND pop the setup guide so the user can fix it.
+                    AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
+                    (NSApp.delegate as? AppDelegate)?.openOnboarding()
+                }
+            }
+        }
 
         // 4. Persist.
         HistoryStore.shared?.add(

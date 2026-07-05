@@ -2,12 +2,44 @@ import FluidAudio
 import ServiceManagement
 import SwiftUI
 
+/// App-wide, user-visible status surface (docs/release-audit.md I2). Dictation
+/// failures used to only hit the log; this drives the menubar indicator so the
+/// user can tell something went wrong and why. Cleared on the next clean
+/// dictation. MainActor because the pipeline and MenuBarExtra both touch it.
+@MainActor
+final class AppStatus: ObservableObject {
+    static let shared = AppStatus()
+
+    /// Most recent failure message, or nil when the last dictation was clean.
+    @Published var lastError: String?
+
+    private init() {}
+
+    func report(_ message: String) {
+        lastError = message
+        Log.log("status surfaced to user: \(message)")
+    }
+
+    func clearError() {
+        guard lastError != nil else { return }
+        lastError = nil
+    }
+}
+
 @main
 struct MurmurApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var status = AppStatus.shared
 
     var body: some Scene {
-        MenuBarExtra("Murmur", systemImage: "waveform.circle") {
+        MenuBarExtra("Murmur", systemImage: status.lastError == nil ? "waveform.circle" : "exclamationmark.triangle.fill") {
+            if let error = status.lastError {
+                Text("⚠︎ \(error)")
+                Button("Dismiss Warning") {
+                    status.clearError()
+                }
+                Divider()
+            }
             Button("Open History…") {
                 appDelegate.openHistory()
             }
@@ -15,6 +47,9 @@ struct MurmurApp: App {
                 appDelegate.openSettings()
             }
             .keyboardShortcut(",")
+            Button("Setup…") {
+                appDelegate.openOnboarding()
+            }
             #if DEBUG
             // Dev-only spike triggers — compiled out of release builds
             // (docs/release-prep.md C1).
@@ -51,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pillPanel: PillPanel?
     private var historyWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.log("Murmur launched (pid \(ProcessInfo.processInfo.processIdentifier))")
@@ -69,6 +105,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Regular app now: opening the app shows the History window as the
         // main window (docs/pill-app-redesign.md §A).
         openHistory()
+        // First launch: guide the user through the two permission grants
+        // (docs/release-audit.md I1). Shown once; re-openable via "Setup…".
+        if !AppSettings.hasCompletedOnboarding {
+            openOnboarding()
+        }
     }
 
     /// Dock-icon click (or app reopen) with no visible windows → re-show the
@@ -149,6 +190,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         Log.log("settings window shown")
+    }
+
+    /// First-run permissions guide (docs/release-audit.md I1). Own window,
+    /// same NSWindow pattern as Settings/History; re-openable from the menubar
+    /// "Setup…" item and auto-presented when a paste fails for lack of
+    /// Accessibility. Dismissing marks onboarding complete.
+    func openOnboarding() {
+        if onboardingWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Murmur — Setup"
+            window.contentView = NSHostingView(rootView: OnboardingView(onComplete: { [weak self] in
+                AppSettings.hasCompletedOnboarding = true
+                self?.onboardingWindow?.close()
+            }))
+            window.center()
+            window.isReleasedWhenClosed = false
+            onboardingWindow = window
+        }
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        Log.log("onboarding window shown")
     }
 
     #if DEBUG
