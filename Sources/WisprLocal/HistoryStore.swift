@@ -241,7 +241,10 @@ final class HistoryStore {
     static func recentCleanedTexts(in context: ModelContext, limit: Int) -> [String] {
         let doneRaw = DictationStatus.done.rawValue
         var descriptor = FetchDescriptor<Dictation>(
-            predicate: #Predicate { $0.statusRaw == doneRaw && !$0.cleanedText.isEmpty },
+            // Use `!= ""` not `!.isEmpty`: on Xcode 26.4, `.isEmpty` inside a
+            // SwiftData #Predicate silently doesn't filter (empty cleanedText
+            // leaks through). Caught by MurmurTests.
+            predicate: #Predicate { $0.statusRaw == doneRaw && $0.cleanedText != "" },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = limit
