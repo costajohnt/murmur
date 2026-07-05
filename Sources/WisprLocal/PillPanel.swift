@@ -5,8 +5,16 @@ import SwiftUI
 
 enum PillMetrics {
     /// Idle: tiny, empty, near-transparent — a barely-there lozenge.
-    static let idleWidth: CGFloat = 44
-    static let idleHeight: CGFloat = 14
+    static let idleWidth: CGFloat = 40
+    static let idleHeight: CGFloat = 7
+    /// Idle tint/border are dropped near to invisible — just enough for the
+    /// blur to read as a shape at rest.
+    static let idleTintOpacity: Double = 0.04
+    static let idleBorderOpacity: Double = 0.05
+    /// Extra horizontal slop added to the idle capsule's half-width when
+    /// hit-testing a click — the thin/narrow idle pill needs a generous
+    /// margin so it stays reliably clickable.
+    static let idleHitSlop: CGFloat = 12
     /// Active (listening/processing): expands to ✕ | waveform | ✓.
     static let activeWidth: CGFloat = 150
     static let activeHeight: CGFloat = 32
@@ -130,7 +138,7 @@ final class PillPanel: NSPanel {
         switch pillState.phase {
         case .idle:
             // Whole tiny capsule (plus a little slop) starts recording.
-            if abs(x - mid) <= PillMetrics.idleWidth / 2 + 8 {
+            if abs(x - mid) <= PillMetrics.idleWidth / 2 + PillMetrics.idleHitSlop {
                 DictationCoordinator.shared.pillTapped()
             } else {
                 Log.log("PILL CLICK: outside idle capsule, ignored")
@@ -202,7 +210,7 @@ struct PillView: View {
 
     private var tintOpacity: Double {
         switch state.phase {
-        case .idle: return 0.12   // faint at rest — deliberately barely-there
+        case .idle: return PillMetrics.idleTintOpacity   // barely-there at rest
         case .listening: return 0.20
         case .processing: return 0.28
         }
@@ -211,7 +219,7 @@ struct PillView: View {
     /// Border softens at rest too, so the idle pill reads as a whisper of a
     /// shape rather than an outlined control.
     private var borderOpacity: Double {
-        state.phase == .idle ? 0.10 : 0.18
+        state.phase == .idle ? PillMetrics.idleBorderOpacity : 0.18
     }
 
     @ViewBuilder
