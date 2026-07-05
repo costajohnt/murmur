@@ -16,6 +16,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Sources/Assets.xcassets
+        buildPhase: resources
       - path: Tests/fixtures/fixture.wav
         buildPhase: resources
     dependencies:
@@ -31,6 +33,7 @@ targets:
         NSMicrophoneUsageDescription: "Murmur transcribes your speech locally."
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.costajohnt.murmur
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Development"
