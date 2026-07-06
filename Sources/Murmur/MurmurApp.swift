@@ -100,6 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerTestHooks()
         #endif
         DictationCoordinator.shared.preloadAsr()
+        // Warm the Ollama cleanup model too — but only when cleanup will run.
+        // Off mode skips the LLM entirely, so there's nothing to preload.
+        if AppSettings.cleanupMode != .off {
+            DictationCoordinator.shared.preloadOllama()
+        }
         // No-op unless the user enabled the hotkey in Settings (default off).
         HotkeyManager.shared.apply()
         // Regular app now: opening the app shows the History window as the

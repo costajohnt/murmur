@@ -189,32 +189,50 @@ final class DictationCoordinator {
             return
         }
 
-        // 2. Cleanup (Ollama) — on any failure fall back to the raw transcript.
-        // Context-aware: feed recent history so the model corrects ASR errors
-        // toward the user's real vocabulary. Empty
-        // history → nil context → identical to the old cold-start behavior.
-        let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: CleanupContext.glossarySourceLimit) ?? []
-        let context = CleanupContext.build(from: recentTexts)
-        if let context {
-            Log.log("pipeline cleanup context: \(context.count) chars from \(recentTexts.count) history entries")
-        }
-        let model = await ollama.resolveModel()
+        // 2. Cleanup — how much runs depends on AppSettings.cleanupMode:
+        //   .off   → no LLM at all: inject the raw transcript verbatim. Instant,
+        //            and persisted with the "raw" model sentinel (NOT "", which
+        //            HistoryView treats as a cleanup-failed marker).
+        //   .light → LLM with the tightened formatter prompt but NO history
+        //            context, so there's no cold-context feedback loop.
+        //   .full  → history-aware path: feed recent transcripts so the model
+        //            corrects ASR errors toward the user's real vocabulary.
+        let mode = AppSettings.cleanupMode
         var cleaned = raw
         var status = DictationStatus.done
-        do {
-            let cleanStart = Date()
-            cleaned = try await ollama.clean(raw, model: model, context: context, tone: AppSettings.tonePreset)
-            #if DEBUG
-            Log.log(String(format: "pipeline cleanup (%@, %.2fs): \"%@\"", model, Date().timeIntervalSince(cleanStart), cleaned))
-            #else
-            Log.log(String(format: "pipeline cleanup (%@, %.2fs): %d chars", model, Date().timeIntervalSince(cleanStart), cleaned.count))
-            #endif
-        } catch {
-            status = .cleanupFailed
-            // Raw transcript still gets injected (existing fallback); ALSO tell
-            // the user cleanup didn't run.
-            AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
-            Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
+        var persistedModelName = "raw"
+
+        if mode == .off {
+            cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            Log.log("pipeline cleanup: mode=off, injecting raw transcript verbatim")
+        } else {
+            // .light feeds no context (nil); .full builds it from history.
+            var context: String?
+            if mode == .full {
+                let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: CleanupContext.glossarySourceLimit) ?? []
+                context = CleanupContext.build(from: recentTexts)
+                if let context {
+                    Log.log("pipeline cleanup context: \(context.count) chars from \(recentTexts.count) history entries")
+                }
+            }
+            let model = await ollama.resolveModel()
+            do {
+                let cleanStart = Date()
+                cleaned = try await ollama.clean(raw, model: model, context: context, tone: AppSettings.tonePreset)
+                persistedModelName = model
+                #if DEBUG
+                Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): \"%@\"", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned))
+                #else
+                Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): %d chars", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned.count))
+                #endif
+            } catch {
+                status = .cleanupFailed
+                persistedModelName = ""
+                // Raw transcript still gets injected (existing fallback); ALSO
+                // tell the user cleanup didn't run.
+                AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
+                Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
+            }
         }
 
         // 3. Inject into the snapshotted target.
@@ -259,7 +277,7 @@ final class DictationCoordinator {
         HistoryStore.shared?.add(
             rawTranscript: raw,
             cleanedText: cleaned,
-            modelName: status == .cleanupFailed ? "" : model,
+            modelName: persistedModelName,
             status: status,
             audioPath: audioPath,
             durationMs: durationMs
@@ -286,6 +304,18 @@ final class DictationCoordinator {
     func preloadAsr() {
         Task {
             _ = try? await ensureAsr()
+        }
+    }
+
+    // MARK: - Ollama warm-up
+
+    /// Preload the cleanup model into Ollama at launch so the first cleanup
+    /// doesn't pay a cold model load. Callers should only invoke this when
+    /// cleanup will actually run (`AppSettings.cleanupMode != .off`).
+    func preloadOllama() {
+        Task {
+            let model = await ollama.resolveModel()
+            await ollama.warmup(model: model)
         }
     }
 }

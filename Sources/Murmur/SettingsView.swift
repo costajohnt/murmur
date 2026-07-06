@@ -10,6 +10,7 @@ import SwiftUI
 /// without restart. Hotkey and login-item changes are applied immediately in
 /// onChange handlers.
 struct SettingsView: View {
+    @AppStorage(AppSettings.cleanupModeKey) private var cleanupModeRaw = AppSettings.cleanupMode.rawValue
     @AppStorage(AppSettings.cleanupModelOverrideKey) private var modelOverride = ""
     @AppStorage(AppSettings.tonePresetKey) private var toneRaw = TonePreset.faithful.rawValue
     @AppStorage(AppSettings.hotkeyEnabledKey) private var hotkeyEnabled = false
@@ -23,8 +24,13 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            modelSection
-            toneSection
+            cleanupSection
+            // Model and Tone only apply when the LLM actually runs. Off mode
+            // injects the raw transcript, so hide both.
+            if !cleanupOff {
+                modelSection
+                toneSection
+            }
             hotkeySection
             loginSection
         }
@@ -37,6 +43,26 @@ struct SettingsView: View {
         .onChange(of: hotkeyEnabled) { HotkeyManager.shared.apply() }
         .onChange(of: hotkeyBindingRaw) { HotkeyManager.shared.apply() }
         .onChange(of: launchAtLogin) { syncLoginItem() }
+    }
+
+    // MARK: - Cleanup mode
+
+    private var cleanupOff: Bool {
+        (CleanupMode(rawValue: cleanupModeRaw) ?? .off) == .off
+    }
+
+    private var cleanupSection: some View {
+        Section("Cleanup") {
+            Picker("Cleanup", selection: $cleanupModeRaw) {
+                ForEach(CleanupMode.allCases) { mode in
+                    Text(mode.label).tag(mode.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text((CleanupMode(rawValue: cleanupModeRaw) ?? .off).summary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Cleanup model

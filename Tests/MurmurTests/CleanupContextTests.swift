@@ -123,6 +123,19 @@ final class CleanupContextTests: XCTestCase {
         XCTAssertFalse(terms.contains("Mondays"))
     }
 
+    func testNewlineIsTreatedAsSentenceBoundary() {
+        // List-item leading words are capitalized only because they start a
+        // line, not because they're proper nouns. A newline must reset the
+        // sentence-start state so "Add", "Redesign", and "Then" are excluded,
+        // while a genuine mid-line proper noun ("Proxmox") still qualifies.
+        let text = "Add the pill fix.\nRedesign the panel using Proxmox.\nThen deploy."
+        let terms = CleanupContext.glossaryTerms(from: [text])
+        XCTAssertFalse(terms.contains("Add"))
+        XCTAssertFalse(terms.contains("Redesign"))
+        XCTAssertFalse(terms.contains("Then"))
+        XCTAssertTrue(terms.contains("Proxmox"))
+    }
+
     func testStopTermsAreExcluded() {
         let terms = CleanupContext.glossaryTerms(from: ["I'm OK with The plan, I've said An hour is fine."])
         XCTAssertFalse(terms.contains("I'm"))

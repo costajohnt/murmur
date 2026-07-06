@@ -85,28 +85,36 @@ enum CleanupContext {
 
         for text in texts.prefix(glossarySourceLimit) {
             var atSentenceStart = true
-            for rawToken in text.split(whereSeparator: { $0.isWhitespace }) {
-                let token = rawToken.trimmingCharacters(
-                    in: .punctuationCharacters.union(.symbols)
-                )
-                let startedSentence = atSentenceStart
-                // Sentence boundary for the NEXT token.
-                if let last = rawToken.last, ".!?:".contains(last) {
-                    atSentenceStart = true
-                } else if !token.isEmpty {
-                    atSentenceStart = false
-                }
+            // Split on newlines first so a line start is a sentence boundary:
+            // list items ("Add the fix", "Redesign the pill", "Then deploy")
+            // lead with a capitalized word only because it starts the line, not
+            // because it's a proper noun. Treating the newline as a boundary
+            // keeps those out of the glossary.
+            for line in text.split(whereSeparator: \.isNewline) {
+                atSentenceStart = true
+                for rawToken in line.split(whereSeparator: { $0.isWhitespace }) {
+                    let token = rawToken.trimmingCharacters(
+                        in: .punctuationCharacters.union(.symbols)
+                    )
+                    let startedSentence = atSentenceStart
+                    // Sentence boundary for the NEXT token.
+                    if let last = rawToken.last, ".!?:".contains(last) {
+                        atSentenceStart = true
+                    } else if !token.isEmpty {
+                        atSentenceStart = false
+                    }
 
-                guard token.count >= 2,
-                      !stopTerms.contains(token),
-                      isCandidate(token, atSentenceStart: startedSentence)
-                else { continue }
+                    guard token.count >= 2,
+                          !stopTerms.contains(token),
+                          isCandidate(token, atSentenceStart: startedSentence)
+                    else { continue }
 
-                if counts[token] == nil {
-                    firstSeen[token] = nextIndex
-                    nextIndex += 1
+                    if counts[token] == nil {
+                        firstSeen[token] = nextIndex
+                        nextIndex += 1
+                    }
+                    counts[token, default: 0] += 1
                 }
-                counts[token, default: 0] += 1
             }
         }
 

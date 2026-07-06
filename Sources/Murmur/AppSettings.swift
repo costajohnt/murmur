@@ -28,6 +28,36 @@ enum TonePreset: String, CaseIterable, Identifiable {
     }
 }
 
+/// How much post-ASR cleanup to run. Trades latency for polish:
+/// `.off` skips the LLM entirely (instant, raw transcript); `.light` runs the
+/// LLM with the tightened formatter prompt but NO dictation-history context
+/// (punctuation/capitalization only, no cold-context feedback loop); `.full`
+/// is the history-aware path. The unwritten-key default is RAM-gated (see
+/// `AppSettings.cleanupMode`) so low-memory Macs default Off.
+enum CleanupMode: String, CaseIterable, Identifiable {
+    case off
+    case light
+    case full
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .light: return "Light"
+        case .full: return "Full"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .off: return "Off — instant, raw transcript"
+        case .light: return "Light — punctuation only, no history"
+        case .full: return "Full — uses your dictation history"
+        }
+    }
+}
+
 /// The fixed global-hotkey choices (a small fixed set instead of a full
 /// shortcut recorder).
 /// Carbon virtual key codes + modifier masks, registered via
@@ -77,6 +107,7 @@ enum HotkeyBinding: String, CaseIterable, Identifiable {
 /// off. Launch-at-login is not stored here — it's derived from
 /// SMAppService.mainApp.status, the source of truth.
 enum AppSettings {
+    static let cleanupModeKey = "cleanupMode"
     static let cleanupModelOverrideKey = "cleanupModelOverride"
     static let tonePresetKey = "tonePreset"
     static let hotkeyEnabledKey = "hotkeyEnabled"
@@ -91,6 +122,20 @@ enum AppSettings {
     static var hasCompletedOnboarding: Bool {
         get { defaults.bool(forKey: hasCompletedOnboardingKey) }
         set { defaults.set(newValue, forKey: hasCompletedOnboardingKey) }
+    }
+
+    /// How much cleanup to run on the next dictation. The unwritten-key
+    /// default is RAM-gated: Macs with more than 32 GB default to `.full`
+    /// (an M5 Max / 64 GB runs the 7B history-aware path comfortably), while
+    /// smaller Macs (M4 / 24 GB) default to `.off` so the first dictation is
+    /// instant rather than paying a cold model load. Once the user picks a
+    /// mode in Settings the stored value wins.
+    static var cleanupMode: CleanupMode {
+        if let raw = defaults.string(forKey: cleanupModeKey),
+           let mode = CleanupMode(rawValue: raw) {
+            return mode
+        }
+        return ProcessInfo.processInfo.physicalMemory > 32 * 1024 * 1024 * 1024 ? .full : .off
     }
 
     /// nil = Auto (the RAM-based resolve). Stored as "" for @AppStorage.
