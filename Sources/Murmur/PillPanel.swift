@@ -97,11 +97,12 @@ final class PillPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
-        // Above .statusBar deliberately: the real Wispr Flow app keeps an
-        // invisible-but-clickable "Status" overlay at CGWindowLevel 1000 over
-        // bottom-center, which intercepted clicks on our pill's right side
-        // (✓ button) when we sat at .statusBar. One level above screensaver
-        // guarantees the pill wins the hit-test whenever it's visible.
+        // Above .statusBar deliberately: another always-on-top overlay (seen
+        // with a competing dictation app) can keep an invisible-but-clickable
+        // window at CGWindowLevel 1000 over bottom-center, which intercepted
+        // clicks on our pill's right side (✓ button) when we sat at .statusBar.
+        // One level above screensaver guarantees the pill wins the hit-test
+        // whenever it's visible.
         level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         isFloatingPanel = true
         hidesOnDeactivate = false

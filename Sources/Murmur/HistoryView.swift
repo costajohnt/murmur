@@ -2,7 +2,7 @@ import AppKit
 import SwiftData
 import SwiftUI
 
-/// History window, Wispr Flow transcript style: one flat, editorial column of
+/// History window, flat editorial transcript style: one column of
 /// date-grouped transcripts. No sidebar, no stats — transcripts only.
 struct HistoryView: View {
     @Query(sort: \Dictation.createdAt, order: .reverse) private var entries: [Dictation]

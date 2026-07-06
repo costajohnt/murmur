@@ -5,7 +5,7 @@ import AppKit
 /// The actual injection logic lives in `TextInjector` (used by the v1
 /// pipeline and the history window).
 enum SpikeC {
-    static let payload = "hello from wispr-local"
+    static let payload = "hello from murmur"
 
     /// Waits 3 seconds so the user can put the target app frontmost.
     static func run() {

@@ -1,6 +1,6 @@
 # Murmur
 
-Local, offline voice dictation for macOS (Apple Silicon), in the spirit of [Wispr Flow](https://wisprflow.ai). System-wide, with no cloud: your voice never leaves the machine.
+Local, offline voice dictation for macOS (Apple Silicon). System-wide, with no cloud: your voice never leaves the machine.
 
 Click the floating pill (or an optional global hotkey), speak, and the cleaned-up text is inserted at your cursor in whatever app is focused. A history window keeps your dictations so you can copy, re-insert, or regenerate any of them.
 
