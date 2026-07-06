@@ -3,7 +3,7 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 
-/// First-run permissions guide (docs/release-audit.md I1). Murmur needs two
+/// First-run permissions guide. Murmur needs two
 /// system grants and today gives no guidance for either:
 ///
 /// - **Microphone** — prompts automatically the first time we record, but the

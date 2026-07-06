@@ -1,7 +1,7 @@
 import ServiceManagement
 import SwiftUI
 
-/// Native Settings window (docs/settings-panel.md). Zero-config: every
+/// Native Settings window. Zero-config: every
 /// control's default reproduces today's behavior (Auto model, Faithful tone,
 /// hotkey off, launch-at-login off), so the panel is purely for overrides.
 ///

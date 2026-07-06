@@ -41,7 +41,7 @@ final class DictationCoordinator {
 
     /// ✕ on the active pill: stop and DISCARD the in-progress recording — no
     /// ASR, no cleanup, no injection, no history entry — straight back to
-    /// idle (docs/pill-app-redesign.md §B).
+    /// idle.
     func cancel() {
         guard pillState.phase == .listening else {
             Log.log("pipeline: cancel ignored (phase \(pillState.phase))")
@@ -81,7 +81,7 @@ final class DictationCoordinator {
             } catch {
                 Log.log("record start FAILED: \(error.localizedDescription)")
                 // Surface mic-denied / engine failures — the pill just returns
-                // to idle otherwise (docs/release-audit.md I2).
+                // to idle otherwise.
                 AppStatus.shared.report(error.localizedDescription)
                 pillState.phase = .idle
             }
@@ -131,7 +131,7 @@ final class DictationCoordinator {
             let result = try await asr.transcribe(samples, decoderState: &decoderState)
             raw = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             // Transcript content is DEBUG-only: release builds must never
-            // write the user's words to any log (docs/release-prep.md C2).
+            // write the user's words to any log.
             #if DEBUG
             Log.log(String(format: "pipeline ASR (%.3fs): \"%@\"", Date().timeIntervalSince(asrStart), raw))
             #else
@@ -191,7 +191,7 @@ final class DictationCoordinator {
 
         // 2. Cleanup (Ollama) — on any failure fall back to the raw transcript.
         // Context-aware: feed recent history so the model corrects ASR errors
-        // toward the user's real vocabulary (docs/context-cleanup.md). Empty
+        // toward the user's real vocabulary. Empty
         // history → nil context → identical to the old cold-start behavior.
         let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: CleanupContext.glossarySourceLimit) ?? []
         let context = CleanupContext.build(from: recentTexts)
@@ -212,7 +212,7 @@ final class DictationCoordinator {
         } catch {
             status = .cleanupFailed
             // Raw transcript still gets injected (existing fallback); ALSO tell
-            // the user cleanup didn't run (docs/release-audit.md I2).
+            // the user cleanup didn't run.
             AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
             Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
         }

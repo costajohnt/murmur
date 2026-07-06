@@ -1,6 +1,6 @@
 import Foundation
 
-/// Cleanup tone presets (docs/settings-panel.md §2). Every preset keeps the
+/// Cleanup tone presets. Every preset keeps the
 /// FULL faithful "reformat, don't answer" core — presets only append a style
 /// layer on top (see `OllamaClient.systemPrompt(for:)`), so no preset can
 /// weaken the don't-answer / don't-invent guard.
@@ -28,8 +28,8 @@ enum TonePreset: String, CaseIterable, Identifiable {
     }
 }
 
-/// The fixed global-hotkey choices (docs/settings-panel.md §3 allows a small
-/// fixed set instead of a full shortcut recorder — that's what this is).
+/// The fixed global-hotkey choices (a small fixed set instead of a full
+/// shortcut recorder).
 /// Carbon virtual key codes + modifier masks, registered via
 /// `RegisterEventHotKey`, which needs NO Input Monitoring or Accessibility
 /// permission (unlike an NSEvent global monitor).
@@ -70,7 +70,7 @@ enum HotkeyBinding: String, CaseIterable, Identifiable {
     }
 }
 
-/// UserDefaults-backed settings (docs/settings-panel.md). SettingsView binds
+/// UserDefaults-backed settings. SettingsView binds
 /// via @AppStorage with these keys; the pipeline reads through these statics
 /// so changes apply live, no restart. The zero-config defaults (no keys
 /// written) are exactly today's behavior: Auto model, Faithful tone, hotkey
@@ -85,7 +85,7 @@ enum AppSettings {
 
     private static var defaults: UserDefaults { .standard }
 
-    /// First-run gate for the permissions guide (docs/release-audit.md I1).
+    /// First-run gate for the permissions guide.
     /// Defaults to false (unwritten key) so a fresh install shows onboarding
     /// exactly once; set true when the user dismisses it.
     static var hasCompletedOnboarding: Bool {

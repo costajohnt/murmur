@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// Global hotkey via Carbon `RegisterEventHotKey` (docs/settings-panel.md §3).
+/// Global hotkey via Carbon `RegisterEventHotKey`.
 /// Chosen over an NSEvent global monitor deliberately: RegisterEventHotKey
 /// requires NO Input Monitoring / Accessibility permission and fires even
 /// when the app is in the background, so the off-by-default toggle never

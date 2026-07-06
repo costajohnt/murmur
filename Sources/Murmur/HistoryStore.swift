@@ -232,7 +232,7 @@ final class HistoryStore {
     }
 
     /// Last `limit` successful cleaned texts, newest first — the context
-    /// source for context-aware cleanup (docs/context-cleanup.md).
+    /// source for context-aware cleanup.
     func recentCleanedTexts(limit: Int) -> [String] {
         Self.recentCleanedTexts(in: context, limit: limit)
     }

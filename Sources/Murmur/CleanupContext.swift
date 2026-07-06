@@ -1,7 +1,7 @@
 import Foundation
 
-/// Builds the automatic personalization context for the Ollama cleanup stage
-/// (docs/context-cleanup.md). No manual dictionary and no configuration: the
+/// Builds the automatic personalization context for the Ollama cleanup stage.
+/// No manual dictionary and no configuration: the
 /// context is derived entirely from recent successful history entries —
 /// recent cleaned transcripts (vocabulary + style) and an auto-mined glossary
 /// of distinctive terms (capitalized-mid-sentence words, acronyms, camelCase

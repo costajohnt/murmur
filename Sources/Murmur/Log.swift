@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// App logging with a hard privacy boundary (docs/release-prep.md C2):
+/// App logging with a hard privacy boundary:
 ///
 /// - **DEBUG builds:** print to stdout AND append to a log file under
 ///   `~/Library/Application Support/Murmur/debug.log` (NOT /tmp — /tmp is

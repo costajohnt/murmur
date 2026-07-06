@@ -120,8 +120,7 @@ final class PillPanel: NSPanel {
         // on the hosting view with LOCATION-BASED hit-testing (✕ left / ✓
         // right while active). The SwiftUI content stays purely visual — no
         // SwiftUI Button competing for (or swallowing) the first-mouse event,
-        // which is the proven-with-real-clicks arrangement from Spike B
-        // (docs/pill-app-redesign.md "click handling" fallback).
+        // which is the proven-with-real-clicks arrangement from Spike B.
         let click = NSClickGestureRecognizer(target: self, action: #selector(pillClicked(_:)))
         host.addGestureRecognizer(click)
 

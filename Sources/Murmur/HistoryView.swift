@@ -225,7 +225,7 @@ private struct TranscriptRow: View {
                 entry.cleanedText = cleaned
                 entry.modelName = model
                 entry.status = .done
-                // Transcript content is DEBUG-only (docs/release-prep.md C2).
+                // Transcript content is DEBUG-only.
                 #if DEBUG
                 Log.log("history re-clean OK (\(model)): \"\(cleaned)\"")
                 #else

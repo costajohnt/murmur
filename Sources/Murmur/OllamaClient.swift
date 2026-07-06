@@ -25,7 +25,7 @@ struct OllamaClient {
         meaning, do NOT converse or add commentary. Output ONLY the corrected transcript text.
         """
 
-    /// Base system prompt for a tone preset (docs/settings-panel.md §2).
+    /// Base system prompt for a tone preset.
     /// Every preset CONTAINS the full faithful core verbatim — presets only
     /// APPEND a style layer, so the reformat-don't-answer / don't-invent guard
     /// is identical in all of them. `.faithful` is byte-identical to the
@@ -112,7 +112,7 @@ struct OllamaClient {
         }
     }
 
-    /// Settings override first (docs/settings-panel.md §1): if the user picked
+    /// Settings override first: if the user picked
     /// a model AND it's installed, use it; if Ollama is unreachable we can't
     /// verify, so honor the stored choice and let `clean` surface the real
     /// connection error; if it's verifiably gone, log and behave as Auto.

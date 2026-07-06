@@ -2,7 +2,7 @@ import FluidAudio
 import ServiceManagement
 import SwiftUI
 
-/// App-wide, user-visible status surface (docs/release-audit.md I2). Dictation
+/// App-wide, user-visible status surface. Dictation
 /// failures used to only hit the log; this drives the menubar indicator so the
 /// user can tell something went wrong and why. Cleared on the next clean
 /// dictation. MainActor because the pipeline and MenuBarExtra both touch it.
@@ -52,7 +52,7 @@ struct MurmurApp: App {
             }
             #if DEBUG
             // Dev-only spike triggers — compiled out of release builds
-            // (docs/release-prep.md C1).
+            //.
             Divider()
             Button("Spike A: transcribe fixture") {
                 SpikeA.run()
@@ -95,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         // Dev-only: system-wide DistributedNotificationCenter hooks that can
         // trigger recording/injection/history mutation. NEVER registered in
-        // release builds (docs/release-prep.md C1) — any local process could
+        // release builds — any local process could
         // post these notifications.
         registerTestHooks()
         #endif
@@ -103,10 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No-op unless the user enabled the hotkey in Settings (default off).
         HotkeyManager.shared.apply()
         // Regular app now: opening the app shows the History window as the
-        // main window (docs/pill-app-redesign.md §A).
+        // main window.
         openHistory()
         // First launch: guide the user through the two permission grants
-        // (docs/release-audit.md I1). Shown once; re-openable via "Setup…".
+        //. Shown once; re-openable via "Setup…".
         if !AppSettings.hasCompletedOnboarding {
             openOnboarding()
         }
@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Closing the last window must NOT quit — the pill and menubar stay
-    /// until ⌘Q (docs/pill-app-redesign.md §A).
+    /// until ⌘Q.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -192,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.log("settings window shown")
     }
 
-    /// First-run permissions guide (docs/release-audit.md I1). Own window,
+    /// First-run permissions guide. Own window,
     /// same NSWindow pattern as Settings/History; re-openable from the menubar
     /// "Setup…" item and auto-presented when a paste fails for lack of
     /// Accessibility. Dismissing marks onboarding complete.
@@ -388,7 +388,7 @@ enum V1TestHooks {
         Log.log("HISTORY CHECK: inserted entry (\(text.count) chars, audio: \(audioPath != nil)), count now \(store.count())")
     }
 
-    /// Cancel-path check (docs/pill-app-redesign.md): start a real recording,
+    /// Cancel-path check: start a real recording,
     /// cancel it, and prove no history entry was created and the phase is
     /// back to idle. Mic is captured for ~1.5 s; nothing is transcribed,
     /// injected, or persisted.
