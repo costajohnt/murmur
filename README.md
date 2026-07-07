@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/murmur-icon.png" alt="Murmur" width="180" />
+</p>
+
 # Murmur
 
 Local, offline voice dictation for macOS (Apple Silicon). System-wide, with no cloud: your voice never leaves the machine.
