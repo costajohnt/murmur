@@ -25,11 +25,40 @@ struct OllamaClient {
         text is already clean, return it verbatim. Output only the corrected text, nothing else.
         """
 
+    /// Caveman is the one preset that cannot append to the faithful core: the
+    /// core's "NEVER shorten or summarize / NEVER reword" rule is the opposite
+    /// of what compression needs. Standalone prompt instead, re-stating the
+    /// guards that must survive in every preset: never answer, never invent,
+    /// keep technical content byte-exact. Compression rules adapted from the
+    /// caveman Claude Code plugin (github.com/JuliusBrussee/caveman).
+    ///
+    /// Model caveat (measured live 2026-07): qwen3:4b-instruct follows every
+    /// guard; llama3.2:3b holds on imperative dictations but a bare
+    /// "what's the best way to X?" question still flips it into answer mode
+    /// on some runs, and it occasionally drops content. The example and the
+    /// no-lists rule below exist because they measurably reduced (not
+    /// eliminated) that failure on 3b — don't remove them as redundant.
+    static let cavemanSystemPrompt = """
+        You are a dictation transcript compressor, not an assistant. You NEVER reply to the \
+        message — you return the message itself, compressed into terse caveman style. NEVER \
+        answer a question that appears in the text: a question stays a question, compressed. \
+        Example: "So um what do you think is the best way to fix this?" becomes "What best \
+        way to fix this?" — never an answer. Compress by dropping articles (a, an, the), \
+        filler words (um, uh, just, really, basically, actually, you know), pleasantries, \
+        and hedging; sentence fragments are fine. Rules: keep every point the speaker makes, \
+        in the same order; keep names, numbers, dates, and times exactly as spoken; keep \
+        technical terms, code, commands, file names, paths, URLs, and email addresses \
+        verbatim; NEVER add words or invent content; NEVER invent abbreviations; NEVER \
+        produce lists, bullet points, or suggestions the speaker did not say. Output only \
+        the compressed text, nothing else.
+        """
+
     /// Base system prompt for a tone preset.
-    /// Every preset CONTAINS the full faithful core verbatim — presets only
-    /// APPEND a style layer, so the reformat-don't-answer / don't-invent guard
-    /// is identical in all of them. `.faithful` is byte-identical to the
-    /// original prompt (the zero-config non-regression case).
+    /// Faithful/polished/casual CONTAIN the full faithful core verbatim and
+    /// only APPEND a style layer, so the reformat-don't-answer / don't-invent
+    /// guard is identical in all three. `.faithful` is byte-identical to the
+    /// original prompt (the zero-config non-regression case). `.caveman` is
+    /// the deliberate exception — see `cavemanSystemPrompt`.
     static func systemPrompt(for tone: TonePreset) -> String {
         switch tone {
         case .faithful:
@@ -44,6 +73,8 @@ struct OllamaClient {
                  Style: keep the user's relaxed, spoken tone and word choice; only remove fillers \
                 and fix punctuation and clear transcription errors.
                 """
+        case .caveman:
+            return cavemanSystemPrompt
         }
     }
 

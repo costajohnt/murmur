@@ -1,13 +1,17 @@
 import Foundation
 
-/// Cleanup tone presets. Every preset keeps the
-/// FULL faithful "reformat, don't answer" core — presets only append a style
-/// layer on top (see `OllamaClient.systemPrompt(for:)`), so no preset can
-/// weaken the don't-answer / don't-invent guard.
+/// Cleanup tone presets. Faithful/polished/casual keep the
+/// FULL faithful "reformat, don't answer" core — they only append a style
+/// layer on top (see `OllamaClient.systemPrompt(for:)`), so none of them can
+/// weaken the don't-answer / don't-invent guard. Caveman is the deliberate
+/// exception: compression requires rewording, which the core forbids, so it
+/// uses a standalone prompt that re-states the don't-answer / don't-invent /
+/// keep-code-verbatim guards on its own.
 enum TonePreset: String, CaseIterable, Identifiable {
     case faithful
     case polished
     case casual
+    case caveman
 
     var id: String { rawValue }
 
@@ -16,6 +20,7 @@ enum TonePreset: String, CaseIterable, Identifiable {
         case .faithful: return "Faithful"
         case .polished: return "Polished"
         case .casual: return "Casual"
+        case .caveman: return "Caveman"
         }
     }
 
@@ -24,6 +29,7 @@ enum TonePreset: String, CaseIterable, Identifiable {
         case .faithful: return "Fix punctuation and fillers, leave your wording alone."
         case .polished: return "Also tighten grammar so it reads cleanly, without changing meaning."
         case .casual: return "Keep the relaxed spoken tone, just clean it up."
+        case .caveman: return "Compress into terse caveman speak. Every point kept, fluff dies."
         }
     }
 }
