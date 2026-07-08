@@ -522,9 +522,10 @@ enum V1TestHooks {
                 let model = await client.resolveModel()
                 var cleaned = raw
                 var status = DictationStatus.done
+                let tone = AppSettings.tonePreset
                 do {
-                    cleaned = try await client.clean(raw, model: model)
-                    Log.log("PIPELINE FIXTURE cleanup (\(model)): \"\(cleaned)\"")
+                    cleaned = try await client.clean(raw, model: model, tone: tone)
+                    Log.log("PIPELINE FIXTURE cleanup (\(model), tone=\(tone.rawValue)): \"\(cleaned)\"")
                 } catch {
                     status = .cleanupFailed
                     Log.log("PIPELINE FIXTURE cleanup FAILED (raw kept): \(error.localizedDescription)")
