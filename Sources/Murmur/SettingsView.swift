@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.hotkeyEnabledKey) private var hotkeyEnabled = false
     @AppStorage(AppSettings.hotkeyBindingKey) private var hotkeyBindingRaw = HotkeyBinding.optionSpace.rawValue
     @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = 2.0
+    @AppStorage(AppSettings.brainstemURLKey) private var brainstemURL = ""
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
@@ -34,10 +35,11 @@ struct SettingsView: View {
             }
             hotkeySection
             silenceSection
+            vaultCaptureSection
             loginSection
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 620)
+        .frame(width: 460, height: 700)
         .task {
             await refreshModels()
             launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -176,6 +178,21 @@ struct SettingsView: View {
         silenceAutoStopSeconds <= 0
             ? "Off — recordings only stop when you tap the pill."
             : String(format: "Stops automatically after %.1fs of silence.", silenceAutoStopSeconds)
+    }
+
+    // MARK: - Vault capture
+
+    private var vaultCaptureSection: some View {
+        Section("Vault Capture") {
+            TextField("Brainstem URL", text: $brainstemURL, prompt: Text("http://brainstem.tail194f9d.ts.net"))
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Text(brainstemURL.isEmpty
+                ? "Off — dictations starting with \"note to self\" paste normally, like any other transcript."
+                : "On — dictations starting with \"note to self\" are sent to the vault instead of pasted.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Launch at login

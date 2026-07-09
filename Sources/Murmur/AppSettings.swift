@@ -120,6 +120,7 @@ enum AppSettings {
     static let hotkeyBindingKey = "hotkeyBinding"
     static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     static let silenceAutoStopSecondsKey = "silenceAutoStopSeconds"
+    static let brainstemURLKey = "brainstemURL"
 
     private static var defaults: UserDefaults { .standard }
 
@@ -170,5 +171,13 @@ enum AppSettings {
     /// key — `double(forKey:)` returns 0.0 for both.
     static var silenceAutoStopSeconds: Double {
         (defaults.object(forKey: silenceAutoStopSecondsKey) as? Double) ?? 2.0
+    }
+
+    /// Base URL of the brainstem vault-capture endpoint (e.g.
+    /// "http://brainstem.tail194f9d.ts.net"), no trailing "/capture". Empty
+    /// (the unwritten-key default) means the "note to self" routing feature
+    /// is entirely off: dictations paste like normal, prefix included.
+    static var brainstemURL: String {
+        defaults.string(forKey: brainstemURLKey) ?? ""
     }
 }
