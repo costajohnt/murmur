@@ -65,6 +65,7 @@ targets:
       - path: Sources/Murmur/AppSettings.swift
       - path: Sources/Murmur/OllamaClient.swift
       - path: Sources/Murmur/HistoryStore.swift
+      - path: Sources/Murmur/BrainstemClient.swift
     settings:
       base:
         SWIFT_VERSION: "5.0"
