@@ -165,7 +165,7 @@ struct SettingsView: View {
 
     private var silenceSection: some View {
         Section("Silence Auto-Stop") {
-            Slider(value: $silenceAutoStopSeconds, in: 0...5, step: 0.5) {
+            Slider(value: $silenceAutoStopSeconds, in: 0...15, step: 1.0) {
                 Text("Silence Auto-Stop")
             }
             Text(silenceAutoStopSummary)
