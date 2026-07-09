@@ -15,7 +15,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.tonePresetKey) private var toneRaw = TonePreset.faithful.rawValue
     @AppStorage(AppSettings.hotkeyEnabledKey) private var hotkeyEnabled = false
     @AppStorage(AppSettings.hotkeyBindingKey) private var hotkeyBindingRaw = HotkeyBinding.optionSpace.rawValue
-    @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = AppSettings.silenceAutoStopSeconds
+    @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = 2.0
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
