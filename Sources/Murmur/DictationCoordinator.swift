@@ -81,7 +81,7 @@ final class DictationCoordinator {
             }
         }
 
-        Task {
+        Task { @MainActor in
             do {
                 try await recorder.start()
                 recordStart = Date()
@@ -119,7 +119,7 @@ final class DictationCoordinator {
         Log.log("record stop: \(samples.count) samples (\(String(format: "%.2f", Double(samples.count) / AudioRecorder.sampleRate))s)")
 
         let target = targetApp
-        Task {
+        Task { @MainActor in
             await process(samples: samples, durationMs: durationMs, target: target)
             pillState.phase = .idle
         }
