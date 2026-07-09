@@ -14,10 +14,39 @@ final class AudioRecorder {
     private let lock = NSLock()
 
     /// Live audio level (0..1, dB-mapped + attack/decay smoothed), computed in
-    /// the existing input tap — no second tap. Called on the audio thread;
-    /// the consumer is responsible for hopping to the main actor.
-    var onLevel: ((Float) -> Void)?
+    /// the existing input tap — no second tap. Set on the main thread, called
+    /// on the audio thread; both sides go through `lock` (same one guarding
+    /// `samples`) since a plain var would let the audio thread read a torn/
+    /// stale reference while the main thread reassigns it. The consumer is
+    /// responsible for hopping to the main actor.
+    var onLevel: ((Float) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onLevel }
+        set { lock.lock(); defer { lock.unlock() }; _onLevel = newValue }
+    }
+    private var _onLevel: ((Float) -> Void)?
     private var smoothedLevel: Float = 0
+
+    /// Fires at most once per recording, on the audio thread, when the
+    /// smoothed level has stayed at/below `silenceThreshold` for
+    /// `silenceAutoStopDuration` seconds (after the grace period). Same
+    /// cross-thread setup/guard as `onLevel` above. The consumer is
+    /// responsible for hopping to the main actor and driving the same
+    /// stop-and-process path as a manual stop.
+    var onSilenceTimeout: (() -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onSilenceTimeout }
+        set { lock.lock(); defer { lock.unlock() }; _onSilenceTimeout = newValue }
+    }
+    private var _onSilenceTimeout: (() -> Void)?
+    /// `recordStartTime`/`silenceStartTime`/`didFireSilenceTimeout`/
+    /// `silenceAutoStopDuration` below are written on the main thread in
+    /// `start()` and read/written on the audio thread in
+    /// `checkSilenceAutoStop()` — every access to them goes through `lock`.
+    private var recordStartTime: Date?
+    private var silenceStartTime: Date?
+    private var didFireSilenceTimeout = false
+    /// Snapshotted from AppSettings at `start()` so the audio thread never
+    /// touches UserDefaults mid-recording. 0 disables auto-stop.
+    private var silenceAutoStopDuration: TimeInterval = 0
 
     /// Level mapping/smoothing constants: speech RMS maps to roughly
     /// -50 dB (very quiet) .. -10 dB (loud), so quiet speech still moves the
@@ -27,6 +56,16 @@ final class AudioRecorder {
     private static let dbCeiling: Float = -10
     private static let attackAlpha: Float = 0.6
     private static let decayAlpha: Float = 0.2
+
+    /// Near-silence, for auto-stop purposes: a small margin above dbFloor so
+    /// room tone / mic hiss (which sits at the floor) doesn't need to hit
+    /// literal zero to count as "silence". Expressed in the same normalized
+    /// 0..1 space as `smoothedLevel`.
+    private static let silenceMarginDb: Float = 5
+    private static let silenceThreshold: Float = silenceMarginDb / (dbCeiling - dbFloor)
+    /// Never auto-stop this early — the user hasn't necessarily started
+    /// talking yet.
+    private static let silenceGraceSeconds: TimeInterval = 1.5
 
     let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -61,6 +100,10 @@ final class AudioRecorder {
 
         lock.lock()
         samples.removeAll()
+        recordStartTime = Date()
+        silenceStartTime = nil
+        didFireSilenceTimeout = false
+        silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
         lock.unlock()
         smoothedLevel = 0
 
@@ -128,6 +171,39 @@ final class AudioRecorder {
         let alpha = normalized > smoothedLevel ? Self.attackAlpha : Self.decayAlpha
         smoothedLevel += alpha * (normalized - smoothedLevel)
         onLevel?(smoothedLevel)
+        checkSilenceAutoStop()
+    }
+
+    /// Accumulates time spent at/below `silenceThreshold` and fires
+    /// `onSilenceTimeout` once that exceeds `silenceAutoStopDuration`, after
+    /// the grace period and skipped entirely when auto-stop is off (0).
+    /// Runs on the audio thread, right after each level update. The
+    /// shared-state check runs under `lock`; the callback itself is invoked
+    /// after releasing it, both to avoid holding the (non-reentrant) lock
+    /// during arbitrary consumer code and because `onSilenceTimeout`'s own
+    /// getter re-locks.
+    private func checkSilenceAutoStop() {
+        let shouldFire: Bool = {
+            lock.lock()
+            defer { lock.unlock() }
+            guard silenceAutoStopDuration > 0, !didFireSilenceTimeout,
+                  let recordStartTime else { return false }
+            let now = Date()
+            guard now.timeIntervalSince(recordStartTime) >= Self.silenceGraceSeconds else { return false }
+
+            guard smoothedLevel <= Self.silenceThreshold else {
+                silenceStartTime = nil
+                return false
+            }
+            let start = silenceStartTime ?? now
+            silenceStartTime = start
+            guard now.timeIntervalSince(start) >= silenceAutoStopDuration else { return false }
+            didFireSilenceTimeout = true
+            return true
+        }()
+        if shouldFire {
+            onSilenceTimeout?()
+        }
     }
 
     /// Writes samples to a 16-bit PCM WAV at 16 kHz mono.

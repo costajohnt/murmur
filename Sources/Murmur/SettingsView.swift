@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.tonePresetKey) private var toneRaw = TonePreset.faithful.rawValue
     @AppStorage(AppSettings.hotkeyEnabledKey) private var hotkeyEnabled = false
     @AppStorage(AppSettings.hotkeyBindingKey) private var hotkeyBindingRaw = HotkeyBinding.optionSpace.rawValue
+    @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = 2.0
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
@@ -32,10 +33,11 @@ struct SettingsView: View {
                 toneSection
             }
             hotkeySection
+            silenceSection
             loginSection
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 560)
+        .frame(width: 460, height: 620)
         .task {
             await refreshModels()
             launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -155,6 +157,25 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Silence auto-stop
+
+    private var silenceSection: some View {
+        Section("Silence Auto-Stop") {
+            Slider(value: $silenceAutoStopSeconds, in: 0...5, step: 0.5) {
+                Text("Silence Auto-Stop")
+            }
+            Text(silenceAutoStopSummary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var silenceAutoStopSummary: String {
+        silenceAutoStopSeconds <= 0
+            ? "Off — recordings only stop when you tap the pill."
+            : String(format: "Stops automatically after %.1fs of silence.", silenceAutoStopSeconds)
     }
 
     // MARK: - Launch at login

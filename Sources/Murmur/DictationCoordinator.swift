@@ -49,6 +49,7 @@ final class DictationCoordinator {
         }
         let samples = recorder.stop()
         recorder.onLevel = nil
+        recorder.onSilenceTimeout = nil
         pillState.resetLevels()
         recordStart = nil
         targetApp = nil
@@ -71,6 +72,13 @@ final class DictationCoordinator {
                 self?.pillState.pushLevel(level)
             }
         }
+        // Sustained near-silence (AppSettings.silenceAutoStopSeconds, 0 =
+        // off) auto-stops through the exact same path as a manual pill tap.
+        recorder.onSilenceTimeout = { [weak self] in
+            DispatchQueue.main.async {
+                self?.autoStopOnSilence()
+            }
+        }
 
         Task {
             do {
@@ -88,10 +96,22 @@ final class DictationCoordinator {
         }
     }
 
+    /// Auto-stop entry point: AudioRecorder fires this at most once per
+    /// recording after `AppSettings.silenceAutoStopSeconds` of sustained
+    /// near-silence. Guarded to `.listening` so it can't fire twice or race a
+    /// manual stop/cancel, which already move the phase away from
+    /// `.listening` before this could run.
+    private func autoStopOnSilence() {
+        guard pillState.phase == .listening else { return }
+        Log.log("record auto-stop: sustained silence, stopping")
+        stopAndProcess()
+    }
+
     private func stopAndProcess() {
         pillState.phase = .processing
         let samples = recorder.stop()
         recorder.onLevel = nil
+        recorder.onSilenceTimeout = nil
         pillState.resetLevels()
         let durationMs = recordStart.map { Int(Date().timeIntervalSince($0) * 1000) }
         recordStart = nil
