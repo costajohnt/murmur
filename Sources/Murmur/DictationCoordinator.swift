@@ -33,9 +33,10 @@ final class DictationCoordinator {
             startListening()
         case .listening:
             stopAndProcess()
-        case .processing:
-            // Ignore clicks while the pipeline runs; it returns to idle itself.
-            Log.log("pipeline: click ignored (processing)")
+        case .processing, .captured:
+            // Ignore clicks while the pipeline runs or the capture
+            // confirmation is showing; both return to idle on their own.
+            Log.log("pipeline: click ignored (\(pillState.phase))")
         }
     }
 
@@ -252,6 +253,42 @@ final class DictationCoordinator {
                 // tell the user cleanup didn't run.
                 AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
                 Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
+            }
+        }
+
+        // 2.5 Vault-capture routing: a cleaned transcript starting with
+        // "note to self" (see BrainstemClient.noteToSelfRemainder) goes to
+        // brainstem's /capture endpoint instead of being pasted — but only
+        // when the feature is configured (AppSettings.brainstemURL
+        // non-empty). Empty URL = feature off, so the prefix falls through
+        // to step 3 and pastes like any other text.
+        if !AppSettings.brainstemURL.isEmpty,
+           let remainder = BrainstemClient.noteToSelfRemainder(in: cleaned) {
+            do {
+                try await BrainstemClient(baseURL: AppSettings.brainstemURL).capture(remainder)
+                Log.log("pipeline vault-capture OK: \(remainder.count) chars")
+                pillState.phase = .captured
+                AppStatus.shared.clearError()
+                // Give the checkmark a moment on screen — mirrors how a
+                // paste is visible the instant it lands; a vault capture
+                // needs this instead since there's nothing else to see.
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                HistoryStore.shared?.add(
+                    rawTranscript: raw,
+                    cleanedText: cleaned,
+                    modelName: persistedModelName,
+                    status: status,
+                    audioPath: audioPath,
+                    durationMs: durationMs
+                )
+                Log.log("pipeline done: status = \(status.rawValue) (captured to vault), history count = \(HistoryStore.shared?.count() ?? -1)")
+                return
+            } catch {
+                // Never lose the words: fall back to pasting the FULL
+                // cleaned transcript (not just the stripped remainder) via
+                // the normal step 3 below.
+                Log.log("pipeline vault-capture FAILED (falling back to paste): \(error.localizedDescription)")
+                AppStatus.shared.report("Vault capture failed. Pasted the transcript instead.")
             }
         }
 
