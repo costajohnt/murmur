@@ -119,6 +119,7 @@ enum AppSettings {
     static let hotkeyEnabledKey = "hotkeyEnabled"
     static let hotkeyBindingKey = "hotkeyBinding"
     static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
+    static let silenceAutoStopSecondsKey = "silenceAutoStopSeconds"
 
     private static var defaults: UserDefaults { .standard }
 
@@ -160,5 +161,14 @@ enum AppSettings {
 
     static var hotkeyBinding: HotkeyBinding {
         defaults.string(forKey: hotkeyBindingKey).flatMap(HotkeyBinding.init(rawValue:)) ?? .optionSpace
+    }
+
+    /// Seconds of sustained near-silence before a listening recording
+    /// auto-stops via the same path as a manual pill tap. 0 disables
+    /// auto-stop. Read via `object(forKey:)` rather than `double(forKey:)` so
+    /// an explicit user-chosen 0 (off) is distinguishable from an unwritten
+    /// key — `double(forKey:)` returns 0.0 for both.
+    static var silenceAutoStopSeconds: Double {
+        (defaults.object(forKey: silenceAutoStopSecondsKey) as? Double) ?? 2.0
     }
 }

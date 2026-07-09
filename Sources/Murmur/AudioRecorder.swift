@@ -19,6 +19,19 @@ final class AudioRecorder {
     var onLevel: ((Float) -> Void)?
     private var smoothedLevel: Float = 0
 
+    /// Fires at most once per recording, on the audio thread, when the
+    /// smoothed level has stayed at/below `silenceThreshold` for
+    /// `silenceAutoStopDuration` seconds (after the grace period). The
+    /// consumer is responsible for hopping to the main actor and driving the
+    /// same stop-and-process path as a manual stop.
+    var onSilenceTimeout: (() -> Void)?
+    private var recordStartTime: Date?
+    private var silenceStartTime: Date?
+    private var didFireSilenceTimeout = false
+    /// Snapshotted from AppSettings at `start()` so the audio thread never
+    /// touches UserDefaults mid-recording. 0 disables auto-stop.
+    private var silenceAutoStopDuration: TimeInterval = 0
+
     /// Level mapping/smoothing constants: speech RMS maps to roughly
     /// -50 dB (very quiet) .. -10 dB (loud), so quiet speech still moves the
     /// bars. Attack is fast (bars jump on speech onset), decay slower (no
@@ -27,6 +40,16 @@ final class AudioRecorder {
     private static let dbCeiling: Float = -10
     private static let attackAlpha: Float = 0.6
     private static let decayAlpha: Float = 0.2
+
+    /// Near-silence, for auto-stop purposes: a small margin above dbFloor so
+    /// room tone / mic hiss (which sits at the floor) doesn't need to hit
+    /// literal zero to count as "silence". Expressed in the same normalized
+    /// 0..1 space as `smoothedLevel`.
+    private static let silenceMarginDb: Float = 5
+    private static let silenceThreshold: Float = silenceMarginDb / (dbCeiling - dbFloor)
+    /// Never auto-stop this early — the user hasn't necessarily started
+    /// talking yet.
+    private static let silenceGraceSeconds: TimeInterval = 1.5
 
     let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -63,6 +86,10 @@ final class AudioRecorder {
         samples.removeAll()
         lock.unlock()
         smoothedLevel = 0
+        recordStartTime = Date()
+        silenceStartTime = nil
+        didFireSilenceTimeout = false
+        silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -128,6 +155,29 @@ final class AudioRecorder {
         let alpha = normalized > smoothedLevel ? Self.attackAlpha : Self.decayAlpha
         smoothedLevel += alpha * (normalized - smoothedLevel)
         onLevel?(smoothedLevel)
+        checkSilenceAutoStop()
+    }
+
+    /// Accumulates time spent at/below `silenceThreshold` and fires
+    /// `onSilenceTimeout` once that exceeds `silenceAutoStopDuration`, after
+    /// the grace period and skipped entirely when auto-stop is off (0).
+    /// Runs on the audio thread, right after each level update.
+    private func checkSilenceAutoStop() {
+        guard silenceAutoStopDuration > 0, !didFireSilenceTimeout,
+              let recordStartTime else { return }
+        let now = Date()
+        guard now.timeIntervalSince(recordStartTime) >= Self.silenceGraceSeconds else { return }
+
+        guard smoothedLevel <= Self.silenceThreshold else {
+            silenceStartTime = nil
+            return
+        }
+        let start = silenceStartTime ?? now
+        silenceStartTime = start
+        if now.timeIntervalSince(start) >= silenceAutoStopDuration {
+            didFireSilenceTimeout = true
+            onSilenceTimeout?()
+        }
     }
 
     /// Writes samples to a 16-bit PCM WAV at 16 kHz mono.
