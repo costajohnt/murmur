@@ -38,6 +38,13 @@ enum PillPhase {
     case idle
     case listening
     case processing
+    /// Brief post-processing confirmation that a "note to self" dictation
+    /// was captured to the vault instead of pasted — pasting has the pasted
+    /// text itself as visible proof it worked; a vault capture has nothing
+    /// to look at, so this state exists purely to give that same "it
+    /// worked" signal. Mirrors `.processing`'s SweepDot: shown briefly, then
+    /// DictationCoordinator returns the pill to `.idle`.
+    case captured
 }
 
 final class PillState: ObservableObject {
@@ -176,8 +183,8 @@ final class PillPanel: NSPanel {
             } else {
                 Log.log("PILL CLICK: center/outside region ignored while listening")
             }
-        case .processing:
-            Log.log("pipeline: click ignored (processing)")
+        case .processing, .captured:
+            Log.log("pipeline: click ignored (\(pillState.phase))")
         }
     }
 
@@ -221,6 +228,7 @@ struct PillView: View {
         case .idle: return PillMetrics.idleTintOpacity   // most see-through at rest
         case .listening: return 0.42
         case .processing: return 0.48
+        case .captured: return 0.48
         }
     }
 
@@ -242,6 +250,8 @@ struct PillView: View {
             ListeningControls(levels: state.levelHistory)
         case .processing:
             SweepDot()
+        case .captured:
+            CapturedCheck()
         }
     }
 }
@@ -306,6 +316,24 @@ private struct LevelMeterBars: View {
             }
         }
         .animation(.linear(duration: 0.08), value: levels)
+    }
+}
+
+/// Captured: a single checkmark that pops in and gently fades — "saved to
+/// the vault, nothing more to do here" (there's no pasted text to look at,
+/// so this is the only proof the capture worked). Own view identity like
+/// SweepDot so the animation always starts clean on phase change.
+private struct CapturedCheck: View {
+    @State private var shown = false
+
+    var body: some View {
+        Image(systemName: "checkmark.circle.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.95))
+            .scaleEffect(shown ? 1 : 0.6)
+            .opacity(shown ? 1 : 0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: shown)
+            .onAppear { shown = true }
     }
 }
 
