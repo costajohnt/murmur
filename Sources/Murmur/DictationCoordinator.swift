@@ -210,7 +210,17 @@ final class DictationCoordinator {
             return
         }
 
-        // 2. Cleanup — how much runs depends on AppSettings.cleanupMode:
+        // 2. Vault-capture routing decision — made on the RAW transcript,
+        // BEFORE cleanup runs. Cleanup (especially the Caveman tone) can
+        // rewrite or drop the "note to self" trigger phrase entirely, which
+        // silently broke routing when this check ran post-cleanup (observed
+        // live: a caveman-compressed transcript never matched). Empty
+        // brainstemURL still means the feature is off, so the prefix is left
+        // in place and cleaned/pasted like any other text below.
+        let brainstemURL = AppSettings.brainstemURL
+        let rawRemainder = brainstemURL.isEmpty ? nil : BrainstemClient.noteToSelfRemainder(in: raw)
+
+        // 3. Cleanup — how much runs depends on AppSettings.cleanupMode:
         //   .off   → no LLM at all: inject the raw transcript verbatim. Instant,
         //            and persisted with the "raw" model sentinel (NOT "", which
         //            HistoryView treats as a cleanup-failed marker).
@@ -218,14 +228,19 @@ final class DictationCoordinator {
         //            context, so there's no cold-context feedback loop.
         //   .full  → history-aware path: feed recent transcripts so the model
         //            corrects ASR errors toward the user's real vocabulary.
+        //
+        // When vault-capture routing matched above, only the REMAINDER (the
+        // trigger phrase already stripped) is cleaned — the cleanup model
+        // never sees "note to self" at all, so it can't rewrite or drop it.
+        let textToClean = rawRemainder ?? raw
         let mode = AppSettings.cleanupMode
-        var cleaned = raw
+        var cleaned = textToClean
         var status = DictationStatus.done
         var persistedModelName = "raw"
 
         if mode == .off {
-            cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            Log.log("pipeline cleanup: mode=off, injecting raw transcript verbatim")
+            cleaned = textToClean.trimmingCharacters(in: .whitespacesAndNewlines)
+            Log.log("pipeline cleanup: mode=off, injecting \(rawRemainder != nil ? "note-to-self remainder" : "raw transcript") verbatim")
         } else {
             // .light feeds no context (nil); .full builds it from history.
             var context: String?
@@ -239,7 +254,7 @@ final class DictationCoordinator {
             let model = await ollama.resolveModel()
             do {
                 let cleanStart = Date()
-                cleaned = try await ollama.clean(raw, model: model, context: context, tone: AppSettings.tonePreset)
+                cleaned = try await ollama.clean(textToClean, model: model, context: context, tone: AppSettings.tonePreset)
                 persistedModelName = model
                 #if DEBUG
                 Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): \"%@\"", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned))
@@ -256,19 +271,18 @@ final class DictationCoordinator {
             }
         }
 
-        // 2.5 Vault-capture routing: a cleaned transcript starting with
-        // "note to self" (see BrainstemClient.noteToSelfRemainder) goes to
-        // brainstem's /capture endpoint instead of being pasted — but only
-        // when the feature is configured (AppSettings.brainstemURL
-        // non-empty). Empty URL = feature off, so the prefix falls through
-        // to step 3 and pastes like any other text.
-        if !AppSettings.brainstemURL.isEmpty,
-           let remainder = BrainstemClient.noteToSelfRemainder(in: cleaned) {
+        // 4. Vault-capture: send the cleaned remainder to brainstem's
+        // /capture endpoint instead of pasting it.
+        if let rawRemainder {
             do {
-                try await BrainstemClient(baseURL: AppSettings.brainstemURL).capture(remainder)
-                Log.log("pipeline vault-capture OK: \(remainder.count) chars")
+                try await BrainstemClient(baseURL: brainstemURL).capture(cleaned)
+                Log.log("pipeline vault-capture OK: \(cleaned.count) chars")
                 pillState.phase = .captured
-                AppStatus.shared.clearError()
+                // Mirrors the inject-success rule below: don't clear a
+                // cleanup-failed warning just because capture succeeded.
+                if status == .done {
+                    AppStatus.shared.clearError()
+                }
                 // Give the checkmark a moment on screen — mirrors how a
                 // paste is visible the instant it lands; a vault capture
                 // needs this instead since there's nothing else to see.
@@ -284,15 +298,17 @@ final class DictationCoordinator {
                 Log.log("pipeline done: status = \(status.rawValue) (captured to vault), history count = \(HistoryStore.shared?.count() ?? -1)")
                 return
             } catch {
-                // Never lose the words: fall back to pasting the FULL
-                // cleaned transcript (not just the stripped remainder) via
-                // the normal step 3 below.
+                // Never lose the words: fall back to pasting. Restore the
+                // literal "note to self: " prefix onto the already-cleaned
+                // remainder rather than paying for a second cleanup pass
+                // over the full raw transcript — same words, less work.
                 Log.log("pipeline vault-capture FAILED (falling back to paste): \(error.localizedDescription)")
                 AppStatus.shared.report("Vault capture failed. Pasted the transcript instead.")
+                cleaned = "note to self: " + cleaned
             }
         }
 
-        // 3. Inject into the snapshotted target.
+        // 5. Inject into the snapshotted target.
         if let target, target.isTerminated {
             // A3: the target was snapshotted at record-start; after ASR +
             // cleanup it may have quit. Pasting now would land ⌘V in whatever
@@ -330,7 +346,7 @@ final class DictationCoordinator {
             }
         }
 
-        // 4. Persist.
+        // 6. Persist.
         HistoryStore.shared?.add(
             rawTranscript: raw,
             cleanedText: cleaned,

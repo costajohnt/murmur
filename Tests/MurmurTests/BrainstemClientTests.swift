@@ -73,6 +73,60 @@ final class BrainstemClientTests: XCTestCase {
         XCTAssertNil(BrainstemClient.noteToSelfRemainder(in: "notetoself buy milk"))
     }
 
+    // MARK: - Routing must happen on the RAW transcript, before cleanup
+    //
+    // Live bug: routing used to check the CLEANED transcript. A tone preset
+    // (Caveman especially) can rewrite or drop "note to self" entirely, so
+    // the prefix silently stopped matching and the dictation pasted instead
+    // of capturing. These tests pin the fix: the routing decision is made on
+    // `raw`, and only the (already-stripped) remainder is ever handed to
+    // cleanup — the trigger phrase is never in front of a rewriting model to
+    // begin with.
+
+    /// Stand-in for an aggressive cleanup pass (e.g. the Caveman tone): it
+    /// can mangle or delete a literal phrase, same as the real Ollama
+    /// cleanup is free to do.
+    private func aggressiveRewrite(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "note to self", with: "reminder", options: .caseInsensitive)
+            .uppercased()
+    }
+
+    func testPostCleanupRoutingIsBrokenByAnAggressiveRewrite() {
+        // Sanity check pinning the live bug this fix addresses: if routing
+        // ran AFTER cleanup, an aggressive rewrite that eats the trigger
+        // phrase means routing never fires.
+        let raw = "note to self, buy milk and eggs"
+        let cleanedFullTranscriptBuggyOrder = aggressiveRewrite(raw)
+        XCTAssertNil(BrainstemClient.noteToSelfRemainder(in: cleanedFullTranscriptBuggyOrder))
+    }
+
+    func testRawBasedRoutingSurvivesAnAggressiveCleanupRewrite() {
+        let raw = "note to self, buy milk and eggs"
+
+        // Fixed order: the routing decision uses raw, before cleanup ever
+        // sees the transcript.
+        let rawRemainder = BrainstemClient.noteToSelfRemainder(in: raw)
+        XCTAssertEqual(rawRemainder, "buy milk and eggs", "capture must still fire off the raw transcript")
+
+        // Cleanup then runs on the remainder ONLY — the trigger phrase was
+        // already stripped, so even an aggressive rewrite can't reintroduce
+        // it into what gets sent to the vault.
+        let capturedText = aggressiveRewrite(rawRemainder!)
+        XCTAssertFalse(
+            capturedText.localizedCaseInsensitiveContains("note to self"),
+            "the trigger phrase must never reach the captured vault text"
+        )
+        XCTAssertTrue(capturedText.localizedCaseInsensitiveContains("buy milk and eggs"))
+    }
+
+    func testCaseInsensitivePrefixSurvivesAggressiveRewriteToo() {
+        let raw = "NOTE TO SELF: call the vet tomorrow"
+        let rawRemainder = BrainstemClient.noteToSelfRemainder(in: raw)
+        XCTAssertEqual(rawRemainder, "call the vet tomorrow")
+        XCTAssertFalse(aggressiveRewrite(rawRemainder!).localizedCaseInsensitiveContains("note to self"))
+    }
+
     // MARK: - capture (network, stubbed)
 
     func testCaptureSendsPostWithJSONBodyToCaptureEndpoint() async throws {
