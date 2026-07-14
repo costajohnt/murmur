@@ -15,7 +15,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.tonePresetKey) private var toneRaw = TonePreset.faithful.rawValue
     @AppStorage(AppSettings.hotkeyEnabledKey) private var hotkeyEnabled = false
     @AppStorage(AppSettings.hotkeyBindingKey) private var hotkeyBindingRaw = HotkeyBinding.optionSpace.rawValue
-    @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = 2.0
+    @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = AppSettings.defaultSilenceAutoStopSeconds
     @AppStorage(AppSettings.brainstemURLKey) private var brainstemURL = ""
 
     /// nil = tags not fetched yet or Ollama unreachable.
