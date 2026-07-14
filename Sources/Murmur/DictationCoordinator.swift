@@ -243,13 +243,9 @@ final class DictationCoordinator {
             Log.log("pipeline cleanup: mode=off, injecting \(rawRemainder != nil ? "note-to-self remainder" : "raw transcript") verbatim")
         } else {
             // .light feeds no context (nil); .full builds it from history.
-            var context: String?
-            if mode == .full {
-                let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: CleanupContext.glossarySourceLimit) ?? []
-                context = CleanupContext.build(from: recentTexts)
-                if let context {
-                    Log.log("pipeline cleanup context: \(context.count) chars from \(recentTexts.count) history entries")
-                }
+            let context = CleanupContext.currentContext()
+            if let context {
+                Log.log("pipeline cleanup context: \(context.count) chars")
             }
             let model = await ollama.resolveModel()
             do {

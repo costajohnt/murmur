@@ -125,6 +125,17 @@ enum CleanupContext {
         return Array(ranked.prefix(glossaryLimit))
     }
 
+    /// The context a live Full-mode dictation would build right now, pulled
+    /// from history. Nil outside Full mode. Shared by the pipeline and by
+    /// History's Re-clean so both treat `AppSettings.cleanupMode` the same
+    /// way instead of each rolling their own mode check.
+    @MainActor
+    static func currentContext() -> String? {
+        guard AppSettings.cleanupMode == .full else { return nil }
+        let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: glossarySourceLimit) ?? []
+        return build(from: recentTexts)
+    }
+
     private static func isCandidate(_ token: String, atSentenceStart: Bool) -> Bool {
         // Words only (allow hyphen/underscore compounds and digits, e.g. HTTP2).
         guard token.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
