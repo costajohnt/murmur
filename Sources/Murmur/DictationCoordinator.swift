@@ -189,11 +189,13 @@ final class DictationCoordinator {
     }
 
     /// Post-ASR pipeline tail: near-silence guard → cleanup → inject →
-    /// persist. Split from `process()` so the dev guard-test hook can drive
-    /// it with a known transcript (ASR output on ambient noise is
-    /// nondeterministic, so the guard can't be exercised reliably end-to-end
-    /// from real audio).
-    func finish(raw: String, audioPath: String?, durationMs: Int?, target: NSRunningApplication?) async {
+    /// persist. Split from `process()` so the dev guard-test and
+    /// fixture-pipeline hooks can drive it with a known transcript (ASR
+    /// output on ambient noise is nondeterministic, so the guard can't be
+    /// exercised reliably end-to-end from real audio). `inject` defaults to
+    /// true for the real pipeline; dev hooks pass false to exercise cleanup
+    /// without actually pasting into whatever app happens to be frontmost.
+    func finish(raw: String, audioPath: String?, durationMs: Int?, target: NSRunningApplication?, inject: Bool = true) async {
         // 1.5 Near-silence guard: a trivially short transcript is mic noise,
         // not speech — and the cleanup model invents content for it (observed:
         // ASR "S" → "Sorry, I didn't catch that..."). Discard outright: no
@@ -305,7 +307,9 @@ final class DictationCoordinator {
         }
 
         // 5. Inject into the snapshotted target.
-        if let target, target.isTerminated {
+        if !inject {
+            Log.log("pipeline inject SKIPPED: inject=false (dev/test call site)")
+        } else if let target, target.isTerminated {
             // A3: the target was snapshotted at record-start; after ASR +
             // cleanup it may have quit. Pasting now would land ⌘V in whatever
             // is frontmost, so skip injection entirely. The transcript is still
