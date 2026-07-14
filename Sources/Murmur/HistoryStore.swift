@@ -266,6 +266,8 @@ final class HistoryStore {
         let descriptor = FetchDescriptor<Dictation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         guard let all = try? context.fetch(descriptor) else { return }
 
+        var changed = false
+
         if all.count > Self.maxEntries {
             for entry in all[Self.maxEntries...] {
                 if let path = entry.audioPath {
@@ -273,7 +275,7 @@ final class HistoryStore {
                 }
                 context.delete(entry)
             }
-            save()
+            changed = true
             Log.log("history: pruned \(all.count - Self.maxEntries) entries beyond cap of \(Self.maxEntries)")
         }
 
@@ -282,9 +284,13 @@ final class HistoryStore {
             if let path = entry.audioPath {
                 try? FileManager.default.removeItem(atPath: path)
                 entry.audioPath = nil
+                changed = true
             }
         }
-        save()
+
+        if changed {
+            save()
+        }
     }
 
     /// New WAV destination for a dictation's audio.
