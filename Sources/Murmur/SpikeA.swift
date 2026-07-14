@@ -25,20 +25,20 @@ enum SpikeA {
         }
     }
 
+    @MainActor
     private static func transcribeFixture() async throws {
         guard let fixtureURL = Bundle.main.url(forResource: "fixture", withExtension: "wav") else {
             Log.log("SPIKE A FAILED: fixture.wav not found in app bundle")
             return
         }
         Log.log("SPIKE A: fixture = \(fixtureURL.path)")
-        Log.log("SPIKE A: loading Parakeet TDT v2 (English) — first run downloads the CoreML model from HuggingFace")
 
+        // Reuses the coordinator's resident Parakeet instance instead of
+        // loading a second full model — this used to load its own copy.
         let loadStart = Date()
-        let models = try await AsrModels.downloadAndLoad(version: .v2)
-        let asrManager = AsrManager(config: .default)
-        try await asrManager.loadModels(models)
+        let asrManager = try await DictationCoordinator.shared.ensureAsr()
         let loadElapsed = Date().timeIntervalSince(loadStart)
-        Log.log(String(format: "SPIKE A: models loaded in %.2fs", loadElapsed))
+        Log.log(String(format: "SPIKE A: models ready in %.2fs (instant if already warmed)", loadElapsed))
 
         let asrStart = Date()
         var decoderState = try TdtDecoderState()
