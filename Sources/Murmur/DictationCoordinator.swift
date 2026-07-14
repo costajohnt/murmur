@@ -378,7 +378,15 @@ final class DictationCoordinator {
     /// Warm the ASR models at launch so the first dictation isn't slow.
     func preloadAsr() {
         Task {
-            _ = try? await ensureAsr()
+            do {
+                _ = try await ensureAsr()
+            } catch {
+                // Not fatal — ensureAsr() retries on the first real dictation.
+                // But a silent launch-time failure (offline first run, full
+                // disk) previously surfaced only when that first dictation
+                // failed too, with nothing in between to explain why.
+                Log.log("asr preload FAILED (will retry on first dictation): \(error)")
+            }
         }
     }
 
