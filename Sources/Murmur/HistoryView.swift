@@ -217,11 +217,15 @@ private struct TranscriptRow: View {
     private func reclean() {
         recleaning = true
         let raw = entry.rawTranscript
+        // Same tone + (Full-mode) history context a live dictation would use,
+        // so Re-clean can't silently disagree with Settings.
+        let tone = AppSettings.tonePreset
+        let context = CleanupContext.currentContext()
         Task {
             let client = OllamaClient()
             let model = await client.resolveModel()
             do {
-                let cleaned = try await client.clean(raw, model: model)
+                let cleaned = try await client.clean(raw, model: model, context: context, tone: tone)
                 entry.cleanedText = cleaned
                 entry.modelName = model
                 entry.status = .done
@@ -232,7 +236,8 @@ private struct TranscriptRow: View {
                 Log.log("history re-clean OK (\(model)): \(cleaned.count) chars")
                 #endif
             } catch {
-                entry.status = .cleanupFailed
+                // Leave the entry's existing status/text alone — a failed
+                // re-clean shouldn't mark previously-good output as failed.
                 Log.log("history re-clean FAILED: \(error.localizedDescription)")
             }
             HistoryStore.shared?.save()
