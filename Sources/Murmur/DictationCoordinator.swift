@@ -224,8 +224,10 @@ final class DictationCoordinator {
 
         // 3. Cleanup — how much runs depends on AppSettings.cleanupMode:
         //   .off   → no LLM at all: inject the raw transcript verbatim. Instant,
-        //            and persisted with the "raw" model sentinel (NOT "", which
-        //            HistoryView treats as a cleanup-failed marker).
+        //            and persisted with the "raw" model sentinel (NOT "" —
+        //            that sentinel means cleanup was attempted and failed;
+        //            the UI keys off `status`, not this field, which is
+        //            otherwise write-only metadata).
         //   .light → LLM with the tightened formatter prompt but NO history
         //            context, so there's no cold-context feedback loop.
         //   .full  → history-aware path: feed recent transcripts so the model
