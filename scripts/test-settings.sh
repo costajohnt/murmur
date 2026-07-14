@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compile the real settings-related sources + the settings test harness and
-# run it against live Ollama. See docs/settings-panel.md "Wiring & guardrails".
+# run it against live Ollama.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

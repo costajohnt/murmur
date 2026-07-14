@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compile the real cleanup sources + the context-cleanup test harness and run
-# it against live Ollama. See docs/context-cleanup.md "Verify".
+# it against live Ollama.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

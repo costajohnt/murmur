@@ -1,8 +1,8 @@
 import Foundation
 
-/// Verification harness for the Settings panel logic (docs/settings-panel.md).
-/// Compiles the REAL production sources (OllamaClient, AppSettings, Log) and
-/// verifies against live Ollama:
+/// Verification harness for the Settings panel logic. Compiles the REAL
+/// production sources (OllamaClient, AppSettings, Log) and verifies against
+/// live Ollama:
 ///   1. tone presets: faithful is byte-identical to the base prompt; polished
 ///      and casual both CONTAIN the full base prompt (guard intact) + a style
 ///      layer; all three distinct

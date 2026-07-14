@@ -1,8 +1,8 @@
 import XCTest
 
-/// Covers docs/settings-panel.md's tone-preset system prompt layering
-/// (no network calls — pure string composition). Ports the non-live
-/// assertions from scripts/test-settings.swift into XCTest.
+/// Covers the tone-preset system prompt layering (no network calls — pure
+/// string composition). Ports the non-live assertions from
+/// scripts/test-settings.swift into XCTest.
 final class OllamaClientTests: XCTestCase {
     func testFaithfulIsByteIdenticalToBasePrompt() {
         XCTAssertEqual(OllamaClient.systemPrompt(for: .faithful), OllamaClient.systemPrompt)
