@@ -74,6 +74,12 @@ enum HotkeyBinding: String, CaseIterable, Identifiable {
     case controlOptionSpace
     case commandShiftSpace
     case optionD
+    /// Bare F13/F14, no modifier: for a mapped external device (e.g. a
+    /// Bluetooth remote remapped via Karabiner-Elements) rather than typing.
+    /// F13/F14 have no physical key on virtually any keyboard, so there's
+    /// zero collision risk with normal typing even with no modifier.
+    case f13
+    case f14
 
     var id: String { rawValue }
 
@@ -83,25 +89,33 @@ enum HotkeyBinding: String, CaseIterable, Identifiable {
         case .controlOptionSpace: return "⌃⌥ Space"
         case .commandShiftSpace: return "⌘⇧ Space"
         case .optionD: return "⌥ D"
+        case .f13: return "F13"
+        case .f14: return "F14"
         }
     }
 
-    /// Carbon virtual key code (kVK_Space = 49, kVK_ANSI_D = 2).
+    /// Carbon virtual key code (kVK_Space = 49, kVK_ANSI_D = 2, kVK_F13 =
+    /// 105, kVK_F14 = 107 — verified against the real HIToolbox constants,
+    /// not hardcoded from memory).
     var keyCode: UInt32 {
         switch self {
         case .optionSpace, .controlOptionSpace, .commandShiftSpace: return 49
         case .optionD: return 2
+        case .f13: return 105
+        case .f14: return 107
         }
     }
 
     /// Carbon modifier mask (cmdKey 0x100, shiftKey 0x200, optionKey 0x800,
     /// controlKey 0x1000). Raw values so this file stays Foundation-only.
+    /// F13/F14 use 0 (no modifier) — they're bare-key bindings by design.
     var carbonModifiers: UInt32 {
         switch self {
         case .optionSpace: return 0x800
         case .controlOptionSpace: return 0x1000 | 0x800
         case .commandShiftSpace: return 0x100 | 0x200
         case .optionD: return 0x800
+        case .f13, .f14: return 0
         }
     }
 }
