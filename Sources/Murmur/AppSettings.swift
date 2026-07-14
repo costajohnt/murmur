@@ -132,6 +132,13 @@ enum AppSettings {
         set { defaults.set(newValue, forKey: hasCompletedOnboardingKey) }
     }
 
+    /// Shared RAM gate for both the cleanup-mode default (below) and
+    /// OllamaClient's model choice — keeping one threshold means tuning it
+    /// only requires touching one site.
+    static var isHighMemoryMachine: Bool {
+        ProcessInfo.processInfo.physicalMemory > 32 * 1024 * 1024 * 1024
+    }
+
     /// How much cleanup to run on the next dictation. The unwritten-key
     /// default is RAM-gated: Macs with more than 32 GB default to `.full`
     /// (an M5 Max / 64 GB runs the 7B history-aware path comfortably), while
@@ -143,7 +150,7 @@ enum AppSettings {
            let mode = CleanupMode(rawValue: raw) {
             return mode
         }
-        return ProcessInfo.processInfo.physicalMemory > 32 * 1024 * 1024 * 1024 ? .full : .off
+        return isHighMemoryMachine ? .full : .off
     }
 
     /// nil = Auto (the RAM-based resolve). Stored as "" for @AppStorage.
@@ -164,13 +171,17 @@ enum AppSettings {
         defaults.string(forKey: hotkeyBindingKey).flatMap(HotkeyBinding.init(rawValue:)) ?? .optionSpace
     }
 
+    /// SettingsView's @AppStorage default must match this exactly — it reads
+    /// the same key as its own storage, independent of this getter.
+    static let defaultSilenceAutoStopSeconds = 2.0
+
     /// Seconds of sustained near-silence before a listening recording
     /// auto-stops via the same path as a manual pill tap. 0 disables
     /// auto-stop. Read via `object(forKey:)` rather than `double(forKey:)` so
     /// an explicit user-chosen 0 (off) is distinguishable from an unwritten
     /// key — `double(forKey:)` returns 0.0 for both.
     static var silenceAutoStopSeconds: Double {
-        (defaults.object(forKey: silenceAutoStopSecondsKey) as? Double) ?? 2.0
+        (defaults.object(forKey: silenceAutoStopSecondsKey) as? Double) ?? defaultSilenceAutoStopSeconds
     }
 
     /// Base URL of the brainstem vault-capture endpoint (e.g.

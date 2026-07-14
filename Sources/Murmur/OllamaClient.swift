@@ -11,9 +11,7 @@ struct OllamaClient {
 
     /// RAM-based default per the plan: >32 GB → qwen2.5:7b, else llama3.2:3b.
     static var preferredModel: String {
-        ProcessInfo.processInfo.physicalMemory > 32 * 1024 * 1024 * 1024
-            ? "qwen2.5:7b"
-            : "llama3.2:3b"
+        AppSettings.isHighMemoryMachine ? "qwen2.5:7b" : "llama3.2:3b"
     }
 
     static let systemPrompt = """
