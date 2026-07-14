@@ -9,6 +9,12 @@ struct OllamaClient {
     static let fallbackModel = "llama3.2:3b"
     static let requestTimeout: TimeInterval = 60
 
+    private let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
     /// RAM-based default per the plan: >32 GB → qwen2.5:7b, else llama3.2:3b.
     static var preferredModel: String {
         AppSettings.isHighMemoryMachine ? "qwen2.5:7b" : "llama3.2:3b"
@@ -124,7 +130,7 @@ struct OllamaClient {
     func installedModels() async throws -> [String] {
         let url = Self.baseURL.appendingPathComponent("api/tags")
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await session.data(from: url)
             return try JSONDecoder().decode(TagsResponse.self, from: data).models.map(\.name)
         } catch let error as DecodingError {
             throw error
@@ -191,7 +197,7 @@ struct OllamaClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await session.data(for: request)
         } catch {
             throw OllamaError.unreachable(underlying: error.localizedDescription)
         }
@@ -222,7 +228,7 @@ struct OllamaClient {
                 keep_alive: Self.keepAlive,
                 options: .init(temperature: 0, num_predict: 1)
             ))
-            _ = try await URLSession.shared.data(for: request)
+            _ = try await session.data(for: request)
             Log.log("ollama: warmed up \(model)")
         } catch {
             Log.log("ollama: warmup skipped (\(error.localizedDescription))")

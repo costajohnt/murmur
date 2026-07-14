@@ -137,7 +137,7 @@ final class BrainstemClientTests: XCTestCase {
             return (response, Data())
         }
 
-        let client = BrainstemClient(baseURL: "http://brainstem.example/", session: Self.stubbedSession())
+        let client = BrainstemClient(baseURL: "http://brainstem.example/", session: stubbedURLSession())
         try await client.capture("buy milk")
 
         let request = try XCTUnwrap(capturedRequest)
@@ -158,7 +158,7 @@ final class BrainstemClientTests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!
             return (response, Data())
         }
-        let client = BrainstemClient(baseURL: "http://brainstem.example", session: Self.stubbedSession())
+        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
         try await client.capture("no trailing slash on base")
         XCTAssertEqual(capturedURL?.absoluteString, "http://brainstem.example/capture")
     }
@@ -169,7 +169,7 @@ final class BrainstemClientTests: XCTestCase {
                 let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: nil)!
                 return (response, Data())
             }
-            let client = BrainstemClient(baseURL: "http://brainstem.example", session: Self.stubbedSession())
+            let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
             do {
                 try await client.capture("text")
             } catch {
@@ -183,7 +183,7 @@ final class BrainstemClientTests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 413, httpVersion: nil, headerFields: nil)!
             return (response, Data("too large".utf8))
         }
-        let client = BrainstemClient(baseURL: "http://brainstem.example", session: Self.stubbedSession())
+        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
         do {
             try await client.capture("oversized text")
             XCTFail("expected an error for a 413 response")
@@ -196,7 +196,7 @@ final class BrainstemClientTests: XCTestCase {
         StubURLProtocol.handler = { _ in
             throw URLError(.notConnectedToInternet)
         }
-        let client = BrainstemClient(baseURL: "http://brainstem.example", session: Self.stubbedSession())
+        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
         do {
             try await client.capture("text")
             XCTFail("expected an error when the network request fails")
@@ -204,61 +204,4 @@ final class BrainstemClientTests: XCTestCase {
             // expected
         }
     }
-
-    // MARK: - Stub plumbing
-
-    private static func stubbedSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [StubURLProtocol.self]
-        return URLSession(configuration: config)
-    }
-}
-
-/// Captures the outgoing HTTP body during URLProtocol stubbing, since
-/// `URLRequest.httpBody` is often nil for requests routed through
-/// URLSession (the body moves to a stream) — URLProtocol exposes it via
-/// `httpBodyStream` instead. This mirrors what `startLoading` sees.
-private extension URLRequest {
-    var httpBodyData: Data? {
-        if let httpBody { return httpBody }
-        guard let stream = httpBodyStream else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        let bufferSize = 4096
-        var buffer = [UInt8](repeating: 0, count: bufferSize)
-        while stream.hasBytesAvailable {
-            let read = stream.read(&buffer, maxLength: bufferSize)
-            if read > 0 { data.append(buffer, count: read) }
-            else { break }
-        }
-        return data
-    }
-}
-
-/// URLProtocol stub so BrainstemClient tests never touch the network. Set
-/// `handler` per-test; it receives the outgoing request and returns the
-/// (response, body) pair, or throws to simulate a network failure.
-final class StubURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let handler = Self.handler else {
-            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
-            return
-        }
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
-    }
-
-    override func stopLoading() {}
 }
