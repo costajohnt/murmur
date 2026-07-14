@@ -20,23 +20,23 @@ Four-stage local pipeline, each stage on the right piece of Apple Silicon:
 
 1. **Capture**: `AVAudioEngine` records mic audio on trigger.
 2. **Transcribe**: [FluidAudio](https://github.com/FluidInference/FluidAudio) runs NVIDIA Parakeet via CoreML on the **Apple Neural Engine** (~66 MB, leaves the GPU free).
-3. **Clean up**: a small local LLM served by **Ollama** (on the GPU) fixes punctuation, removes filler words, and formats. It reformats; it never answers. Recent dictations are fed back as context so it learns your vocabulary (e.g. proper nouns) automatically.
+3. **Clean up** (optional): a small local LLM served by **Ollama** (on the GPU) fixes punctuation, removes filler words, and formats — it reformats, never answers. Three modes in Settings: **Off** (default on ≤32 GB Macs — the raw transcript is injected instantly, no Ollama involved), **Light** (LLM cleanup, no history context), and **Full** (default on >32 GB Macs — recent dictations are fed back as context so it learns your vocabulary, e.g. proper nouns, automatically).
 4. **Inject**: pasteboard-then-paste (`CGEvent` ⌘V) drops the text at the cursor.
 
-Because ASR sits on the Neural Engine and the LLM on the GPU, both stay resident with no contention even on a 24 GB machine.
+Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GPU, both stay resident with no contention even on a 24 GB machine.
 
 ## Models: nothing bundled
 
 **No model weights are bundled with Murmur.**
 
 - The ASR model (NVIDIA Parakeet TDT, CC-BY-4.0) is downloaded by FluidAudio on first run.
-- The cleanup LLM is served by your local Ollama install. Murmur picks `llama3.2:3b` (Meta Llama Community License) on smaller machines and `qwen2.5:7b` (Apache-2.0) on machines with more than 32 GB of RAM; you can override the model in Settings.
+- When cleanup is on (Light/Full mode), the LLM is served by your local Ollama install. Murmur picks `llama3.2:3b` (Meta Llama Community License) on smaller machines and `qwen2.5:7b` (Apache-2.0) on machines with more than 32 GB of RAM; you can override the model in Settings.
 
 Each model carries its own license, accepted when you download it. See `NOTICE` for attributions.
 
 ## Build & run
 
-Requirements: macOS 14+, Apple Silicon, [xcodegen](https://github.com/yonaskolb/XcodeGen), and a running [Ollama](https://ollama.com) (`ollama serve`, with at least one model pulled, e.g. `ollama pull llama3.2:3b`).
+Requirements: macOS 14+, Apple Silicon, [xcodegen](https://github.com/yonaskolb/XcodeGen). [Ollama](https://ollama.com) is optional — only needed if you turn on Light or Full cleanup mode in Settings (`ollama serve`, with at least one model pulled, e.g. `ollama pull llama3.2:3b`).
 
 ```sh
 scripts/build.sh   # xcodegen generate + xcodebuild (Debug)
@@ -51,8 +51,8 @@ scripts/run.sh     # launch the built Murmur.app
 
 ## Targets
 
-- Apple **M4 / 24 GB**: tight-memory target; cleanup model `llama3.2:3b`.
-- Apple **M5 Max / 64 GB**: cleanup model auto-steps up to `qwen2.5:7b`.
+- Apple **M4 / 24 GB**: tight-memory target; cleanup mode defaults to **Off** (raw transcript, instant). Switching to Light/Full in Settings uses `llama3.2:3b`.
+- Apple **M5 Max / 64 GB**: cleanup mode defaults to **Full**, using `qwen2.5:7b`.
 
 ## License
 
