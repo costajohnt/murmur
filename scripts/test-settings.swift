@@ -38,8 +38,8 @@ struct SettingsTest {
             check("\(tone.rawValue) contains full base prompt", prompt.hasPrefix(base))
             check("\(tone.rawValue) adds a style layer", prompt.count > base.count)
         }
-        check("all three prompts distinct",
-              Set(TonePreset.allCases.map { OllamaClient.systemPrompt(for: $0) }).count == 3)
+        check("all tone prompts distinct",
+              Set(TonePreset.allCases.map { OllamaClient.systemPrompt(for: $0) }).count == TonePreset.allCases.count)
 
         // ---- 2. resolveModel override behavior (live Ollama tags) ----
         print("\n=== 2. resolveModel override behavior ===")

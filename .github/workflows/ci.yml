@@ -48,17 +48,13 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
 
-      - name: Run unit tests (if a test scheme exists)
+      - name: Run unit tests
         run: |
-          if xcodebuild -project Murmur.xcodeproj -list | grep -qx '        MurmurTests'; then
-            xcodebuild \
-              -project Murmur.xcodeproj \
-              -scheme MurmurTests \
-              -configuration Debug \
-              test \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO
-          else
-            echo "No MurmurTests scheme found yet; skipping test step."
-          fi
+          xcodebuild \
+            -project Murmur.xcodeproj \
+            -scheme MurmurTests \
+            -configuration Debug \
+            test \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
