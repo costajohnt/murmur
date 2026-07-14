@@ -1,8 +1,8 @@
 import Foundation
 import SwiftData
 
-/// Verification harness for context-aware cleanup (docs/context-cleanup.md).
-/// Compiles the REAL production sources (OllamaClient, CleanupContext,
+/// Verification harness for context-aware cleanup. Compiles the REAL
+/// production sources (OllamaClient, CleanupContext,
 /// HistoryStore, Log) and exercises them against live Ollama:
 ///   1. history fetch (in-memory SwiftData container, real fetch code)
 ///   2. correction test: "prox mocks"/"tail scale" → Proxmox/Tailscale

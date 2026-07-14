@@ -1,9 +1,8 @@
 import Foundation
 
 /// Client for brainstem's `/capture` endpoint — the vault-capture half of the
-/// two-way voice loop (docs/superpowers/plans/2026-07-08-voice-loop.md, Task
-/// C). Entirely off unless `AppSettings.brainstemURL` is configured; callers
-/// gate on that before ever constructing this.
+/// two-way voice loop. Entirely off unless `AppSettings.brainstemURL` is
+/// configured; callers gate on that before ever constructing this.
 struct BrainstemClient {
     let baseURL: String
     private let session: URLSession

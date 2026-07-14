@@ -1,10 +1,9 @@
 import XCTest
 
-/// Covers docs/context-cleanup.md's automatic personalization context:
-/// cold-start nil, the recent-snippet budget/cap, the auto-glossary
-/// candidate rules, and the overall context char budget. Ports the
-/// assertions from scripts/test-context-cleanup.swift's non-network checks
-/// into XCTest.
+/// Covers CleanupContext's automatic personalization context: cold-start
+/// nil, the recent-snippet budget/cap, the auto-glossary candidate rules,
+/// and the overall context char budget. Ports the assertions from
+/// scripts/test-context-cleanup.swift's non-network checks into XCTest.
 final class CleanupContextTests: XCTestCase {
 
     // MARK: - build(from:)

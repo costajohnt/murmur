@@ -1,9 +1,9 @@
 import XCTest
 
-/// Covers Task C of docs/superpowers/plans/2026-07-08-voice-loop.md: the
-/// "note to self" prefix-routing rule (pure string logic, no network) and
-/// BrainstemClient.capture's request shape / success-failure mapping (stubbed
-/// via URLProtocol — never hits the live brainstem endpoint from tests).
+/// Covers the "note to self" prefix-routing rule (pure string logic, no
+/// network) and BrainstemClient.capture's request shape / success-failure
+/// mapping (stubbed via URLProtocol — never hits the live brainstem endpoint
+/// from tests).
 final class BrainstemClientTests: XCTestCase {
 
     // MARK: - noteToSelfRemainder (pure routing logic)
