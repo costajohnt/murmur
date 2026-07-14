@@ -222,90 +222,27 @@ final class DictationCoordinator {
         let brainstemURL = AppSettings.brainstemURL
         let rawRemainder = brainstemURL.isEmpty ? nil : BrainstemClient.noteToSelfRemainder(in: raw)
 
-        // 3. Cleanup — how much runs depends on AppSettings.cleanupMode:
-        //   .off   → no LLM at all: inject the raw transcript verbatim. Instant,
-        //            and persisted with the "raw" model sentinel (NOT "" —
-        //            that sentinel means cleanup was attempted and failed;
-        //            the UI keys off `status`, not this field, which is
-        //            otherwise write-only metadata).
-        //   .light → LLM with the tightened formatter prompt but NO history
-        //            context, so there's no cold-context feedback loop.
-        //   .full  → history-aware path: feed recent transcripts so the model
-        //            corrects ASR errors toward the user's real vocabulary.
-        //
-        // When vault-capture routing matched above, only the REMAINDER (the
-        // trigger phrase already stripped) is cleaned — the cleanup model
-        // never sees "note to self" at all, so it can't rewrite or drop it.
+        // 3. Cleanup — how much runs depends on AppSettings.cleanupMode; see
+        // `runCleanup`. When vault-capture routing matched above, only the
+        // REMAINDER (the trigger phrase already stripped) is cleaned — the
+        // cleanup model never sees "note to self" at all, so it can't
+        // rewrite or drop it.
         let textToClean = rawRemainder ?? raw
-        let mode = AppSettings.cleanupMode
-        var cleaned = textToClean
-        var status = DictationStatus.done
-        var persistedModelName = "raw"
-
-        if mode == .off {
-            cleaned = textToClean.trimmingCharacters(in: .whitespacesAndNewlines)
-            Log.log("pipeline cleanup: mode=off, injecting \(rawRemainder != nil ? "note-to-self remainder" : "raw transcript") verbatim")
-        } else {
-            // .light feeds no context (nil); .full builds it from history.
-            let context = CleanupContext.currentContext()
-            if let context {
-                Log.log("pipeline cleanup context: \(context.count) chars")
-            }
-            let model = await ollama.resolveModel()
-            do {
-                let cleanStart = Date()
-                cleaned = try await ollama.clean(textToClean, model: model, context: context, tone: AppSettings.tonePreset)
-                persistedModelName = model
-                #if DEBUG
-                Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): \"%@\"", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned))
-                #else
-                Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): %d chars", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned.count))
-                #endif
-            } catch {
-                status = .cleanupFailed
-                persistedModelName = ""
-                // Raw transcript still gets injected (existing fallback); ALSO
-                // tell the user cleanup didn't run.
-                AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
-                Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
-            }
-        }
+        let (cleanedText, status, persistedModelName) = await runCleanup(
+            textToClean, notedRemainder: rawRemainder != nil)
+        var cleaned = cleanedText
 
         // 4. Vault-capture: send the cleaned remainder to brainstem's
-        // /capture endpoint instead of pasting it.
-        if let rawRemainder {
-            do {
-                try await BrainstemClient(baseURL: brainstemURL).capture(cleaned)
-                Log.log("pipeline vault-capture OK: \(cleaned.count) chars")
-                pillState.phase = .captured
-                // Mirrors the inject-success rule below: don't clear a
-                // cleanup-failed warning just because capture succeeded.
-                if status == .done {
-                    AppStatus.shared.clearError()
-                }
-                // Give the checkmark a moment on screen — mirrors how a
-                // paste is visible the instant it lands; a vault capture
-                // needs this instead since there's nothing else to see.
-                try? await Task.sleep(nanoseconds: 900_000_000)
-                HistoryStore.shared?.add(
-                    rawTranscript: raw,
-                    cleanedText: cleaned,
-                    modelName: persistedModelName,
-                    status: status,
-                    audioPath: audioPath,
-                    durationMs: durationMs
-                )
-                Log.log("pipeline done: status = \(status.rawValue) (captured to vault), history count = \(HistoryStore.shared?.count() ?? -1)")
-                return
-            } catch {
-                // Never lose the words: fall back to pasting. Restore the
-                // literal "note to self: " prefix onto the already-cleaned
-                // remainder rather than paying for a second cleanup pass
-                // over the full raw transcript — same words, less work.
-                Log.log("pipeline vault-capture FAILED (falling back to paste): \(error.localizedDescription)")
-                AppStatus.shared.report("Vault capture failed. Pasted the transcript instead.")
-                cleaned = "note to self: " + cleaned
-            }
+        // /capture endpoint instead of pasting it. On success this persists
+        // the entry itself and `finish()` returns early (a vault capture
+        // skips paste-injection entirely); on failure it restores the
+        // literal "note to self: " prefix onto `cleaned` and falls through
+        // to a normal paste below.
+        if rawRemainder != nil {
+            let captured = await captureToVault(
+                brainstemURL: brainstemURL, cleaned: &cleaned, status: status,
+                persistedModelName: persistedModelName, raw: raw, audioPath: audioPath, durationMs: durationMs)
+            if captured { return }
         }
 
         // 5. Inject into the snapshotted target.
@@ -358,6 +295,92 @@ final class DictationCoordinator {
             durationMs: durationMs
         )
         Log.log("pipeline done: status = \(status.rawValue), history count = \(HistoryStore.shared?.count() ?? -1)")
+    }
+
+    /// The cleanup decision matrix — off/light/full × success/failure —
+    /// extracted out of `finish()` so it isn't buried inside a 160-line
+    /// method. `.off` skips the LLM entirely: raw transcript verbatim,
+    /// persisted with the "raw" model sentinel (NOT "" — that sentinel
+    /// means cleanup was attempted and failed; the UI keys off `status`,
+    /// not this field, which is otherwise write-only metadata). `.light`
+    /// feeds no context (nil); `.full` builds it from history so the model
+    /// corrects ASR errors toward the user's real vocabulary. On failure,
+    /// the raw transcript still gets injected (existing fallback) and the
+    /// user is told cleanup didn't run.
+    private func runCleanup(_ text: String, notedRemainder: Bool) async -> (text: String, status: DictationStatus, model: String) {
+        let mode = AppSettings.cleanupMode
+        guard mode != .off else {
+            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            Log.log("pipeline cleanup: mode=off, injecting \(notedRemainder ? "note-to-self remainder" : "raw transcript") verbatim")
+            return (cleaned, .done, "raw")
+        }
+
+        let context = CleanupContext.currentContext()
+        if let context {
+            Log.log("pipeline cleanup context: \(context.count) chars")
+        }
+        let model = await ollama.resolveModel()
+        do {
+            let cleanStart = Date()
+            let cleaned = try await ollama.clean(text, model: model, context: context, tone: AppSettings.tonePreset)
+            #if DEBUG
+            Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): \"%@\"", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned))
+            #else
+            Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): %d chars", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned.count))
+            #endif
+            return (cleaned, .done, model)
+        } catch {
+            AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
+            Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")
+            return (text, .cleanupFailed, "")
+        }
+    }
+
+    /// Sends `cleaned` to brainstem's vault-capture endpoint. On success,
+    /// persists the history entry itself and returns true so `finish()`
+    /// knows to return early (a vault capture skips paste-injection
+    /// entirely). On failure, restores the literal "note to self: " prefix
+    /// onto `cleaned` in place — rather than paying for a second cleanup
+    /// pass over the full raw transcript — so the caller falls through to
+    /// a normal paste, and returns false.
+    private func captureToVault(
+        brainstemURL: String,
+        cleaned: inout String,
+        status: DictationStatus,
+        persistedModelName: String,
+        raw: String,
+        audioPath: String?,
+        durationMs: Int?
+    ) async -> Bool {
+        do {
+            try await BrainstemClient(baseURL: brainstemURL).capture(cleaned)
+            Log.log("pipeline vault-capture OK: \(cleaned.count) chars")
+            pillState.phase = .captured
+            // Mirrors the inject-success rule below: don't clear a
+            // cleanup-failed warning just because capture succeeded.
+            if status == .done {
+                AppStatus.shared.clearError()
+            }
+            // Give the checkmark a moment on screen — mirrors how a paste
+            // is visible the instant it lands; a vault capture needs this
+            // instead since there's nothing else to see.
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            HistoryStore.shared?.add(
+                rawTranscript: raw,
+                cleanedText: cleaned,
+                modelName: persistedModelName,
+                status: status,
+                audioPath: audioPath,
+                durationMs: durationMs
+            )
+            Log.log("pipeline done: status = \(status.rawValue) (captured to vault), history count = \(HistoryStore.shared?.count() ?? -1)")
+            return true
+        } catch {
+            Log.log("pipeline vault-capture FAILED (falling back to paste): \(error.localizedDescription)")
+            AppStatus.shared.report("Vault capture failed. Pasted the transcript instead.")
+            cleaned = "note to self: " + cleaned
+            return false
+        }
     }
 
     // MARK: - ASR
