@@ -108,7 +108,20 @@ final class AudioRecorder {
         smoothedLevel = 0
 
         let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
+        // Bluetooth mics (AirPods) switch from A2DP to HFP call mode the moment
+        // recording starts; mid-handoff the input node reports a transient
+        // invalid format (0 Hz / 0 channels). `installTap` with such a format
+        // raises an Objective-C NSException that Swift's `try` cannot catch, so
+        // the process aborts (SIGABRT). Wait for the device to settle to a valid
+        // format before reading it once for both the converter and the tap.
+        var inputFormat = input.outputFormat(forBus: 0)
+        for _ in 0..<20 where inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
+            try await Task.sleep(for: .milliseconds(100))
+            inputFormat = input.outputFormat(forBus: 0)
+        }
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw RecorderError.micDenied
+        }
         guard let conv = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw RecorderError.converterUnavailable
         }
