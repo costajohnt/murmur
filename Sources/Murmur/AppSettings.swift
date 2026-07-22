@@ -135,6 +135,7 @@ enum AppSettings {
     static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     static let silenceAutoStopSecondsKey = "silenceAutoStopSeconds"
     static let brainstemURLKey = "brainstemURL"
+    static let preferredInputDeviceUIDKey = "preferredInputDeviceUID"
 
     private static var defaults: UserDefaults { .standard }
 
@@ -204,5 +205,16 @@ enum AppSettings {
     /// is entirely off: dictations paste like normal, prefix included.
     static var brainstemURL: String {
         defaults.string(forKey: brainstemURLKey) ?? ""
+    }
+
+    /// Persistent UID of the CoreAudio input device Murmur should record from.
+    /// Empty (the unwritten-key default) means "System Default" — today's
+    /// behavior, where AVAudioEngine binds to whatever macOS marks as the
+    /// default input. A stored UID (e.g. the RØDE NT-USB Mini) is re-bound in
+    /// `AudioRecorder.start()` whenever that device is connected; if it's
+    /// unplugged the recorder silently falls back to the system default.
+    static var preferredInputDeviceUID: String {
+        get { defaults.string(forKey: preferredInputDeviceUIDKey) ?? "" }
+        set { defaults.set(newValue, forKey: preferredInputDeviceUIDKey) }
     }
 }
