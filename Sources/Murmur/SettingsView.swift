@@ -17,10 +17,12 @@ struct SettingsView: View {
     @AppStorage(AppSettings.hotkeyBindingKey) private var hotkeyBindingRaw = HotkeyBinding.optionSpace.rawValue
     @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = AppSettings.defaultSilenceAutoStopSeconds
     @AppStorage(AppSettings.brainstemURLKey) private var brainstemURL = ""
+    @AppStorage(AppSettings.preferredInputDeviceUIDKey) private var inputDeviceUID = ""
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
     @State private var ollamaReachable = true
+    @State private var inputDevices: [AudioInputDevice] = []
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
 
@@ -33,6 +35,7 @@ struct SettingsView: View {
                 modelSection
                 toneSection
             }
+            microphoneSection
             hotkeySection
             silenceSection
             vaultCaptureSection
@@ -42,6 +45,7 @@ struct SettingsView: View {
         .frame(width: 460, height: 700)
         .task {
             await refreshModels()
+            inputDevices = AudioInputDevice.available()
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
         .onChange(of: hotkeyEnabled) { HotkeyManager.shared.apply() }
@@ -142,6 +146,44 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Microphone
+
+    private var microphoneSection: some View {
+        Section("Microphone") {
+            HStack(alignment: .firstTextBaseline) {
+                Picker("Input", selection: $inputDeviceUID) {
+                    Text("System Default").tag("")
+                    ForEach(inputDevices) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                    // Keep a stored-but-disconnected mic selectable so the
+                    // picker shows the truth instead of silently snapping back
+                    // to System Default.
+                    if !inputDeviceUID.isEmpty && !inputDevices.contains(where: { $0.uid == inputDeviceUID }) {
+                        Text("\(inputDeviceUID) (disconnected)").tag(inputDeviceUID)
+                    }
+                }
+                Button("Refresh") {
+                    inputDevices = AudioInputDevice.available()
+                }
+                .controlSize(.small)
+            }
+            Text(microphoneSummary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var microphoneSummary: String {
+        if inputDeviceUID.isEmpty {
+            return "System Default — follows your macOS Sound input setting."
+        }
+        if inputDevices.contains(where: { $0.uid == inputDeviceUID }) {
+            return "Murmur records from this mic regardless of the macOS default."
+        }
+        return "This mic isn't connected right now; Murmur falls back to the system default until it's back."
     }
 
     // MARK: - Hotkey

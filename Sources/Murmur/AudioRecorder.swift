@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 /// Records microphone input via AVAudioEngine, converting to 16 kHz mono
@@ -108,6 +109,14 @@ final class AudioRecorder {
         smoothedLevel = 0
 
         let input = engine.inputNode
+        // Bind the user-chosen input device (e.g. the RØDE on the dock) before
+        // reading its format or installing the tap. Empty UID = System Default,
+        // in which case we leave the engine on its default input untouched.
+        // Must happen before `outputFormat(forBus:)` below, because switching
+        // the underlying device changes that format. If the chosen device isn't
+        // currently connected we fall through to the system default rather than
+        // failing the recording.
+        bindPreferredInputDevice(on: input)
         // Bluetooth mics (AirPods) switch from A2DP to HFP call mode the moment
         // recording starts; mid-handoff the input node reports a transient
         // invalid format (0 Hz / 0 channels). `installTap` with such a format
@@ -134,6 +143,35 @@ final class AudioRecorder {
         }
         engine.prepare()
         try engine.start()
+    }
+
+    /// Points the engine's input node at the device stored in
+    /// `AppSettings.preferredInputDeviceUID`. No-op when that's empty (System
+    /// Default) or when the stored device isn't currently connected — either
+    /// way the engine keeps its existing default input. Setting
+    /// `kAudioOutputUnitProperty_CurrentDevice` on the input node's audio unit
+    /// is the supported way to make AVAudioEngine capture from a specific
+    /// CoreAudio device on macOS; it must be done before the format is read.
+    private func bindPreferredInputDevice(on input: AVAudioInputNode) {
+        let uid = AppSettings.preferredInputDeviceUID
+        guard !uid.isEmpty else { return }
+        guard var deviceID = AudioInputDevice.deviceID(forUID: uid) else {
+            Log.log("recorder: preferred input '\(uid)' not connected; using system default")
+            return
+        }
+        let unit = input.audioUnit
+        guard let unit else { return }
+        let status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr {
+            Log.log("recorder: failed to bind input device \(deviceID) (status \(status)); using system default")
+        }
     }
 
     /// Stops recording and returns the accumulated 16 kHz mono samples.
