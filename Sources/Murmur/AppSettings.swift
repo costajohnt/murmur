@@ -200,7 +200,7 @@ enum AppSettings {
     }
 
     /// Base URL of the brainstem vault-capture endpoint (e.g.
-    /// "http://brainstem.tail194f9d.ts.net"), no trailing "/capture". Empty
+    /// "http://brainstem.example.ts.net"), no trailing "/capture". Empty
     /// (the unwritten-key default) means the "note to self" routing feature
     /// is entirely off: dictations paste like normal, prefix included.
     static var brainstemURL: String {
