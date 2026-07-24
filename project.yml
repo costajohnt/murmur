@@ -35,13 +35,11 @@ targets:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.costajohnt.murmur
+        # Ad-hoc signing by default so a fresh clone builds without any
+        # Apple cert. scripts/build.sh overrides these via the
+        # DEVELOPMENT_TEAM / CODE_SIGN_IDENTITY env vars for real-cert builds.
         CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "Apple Development"
-        # NOTE: the team ID is the cert's OU (554J63A469), NOT the "([redacted])"
-        # suffix in the cert CN — that's the certificate-holder ID. Using
-        # [redacted] here makes xcodebuild fail with "No signing certificate
-        # 'Mac Development' found".
-        DEVELOPMENT_TEAM: 554J63A469
+        CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.0"
@@ -73,7 +71,6 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.costajohnt.murmur.tests
         CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "Apple Development"
-        DEVELOPMENT_TEAM: 554J63A469
+        CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
