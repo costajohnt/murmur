@@ -34,6 +34,19 @@ Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GP
 
 Each model carries its own license, accepted when you download it. See `NOTICE` for attributions.
 
+## Releases: unsigned by choice
+
+Tagged releases ship an ad-hoc-signed zip built by CI. There is no Apple
+Developer Program membership behind this project, so builds are not
+notarized. macOS Gatekeeper will warn on first launch — right-click the
+app and choose Open, or clear the quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine Murmur.app
+```
+
+Building from source (below) avoids the warning entirely.
+
 ## Build & run
 
 Requirements: macOS 14+, Apple Silicon, [xcodegen](https://github.com/yonaskolb/XcodeGen). [Ollama](https://ollama.com) is optional — only needed if you turn on Light or Full cleanup mode in Settings (`ollama serve`, with at least one model pulled, e.g. `ollama pull llama3.2:3b`).
