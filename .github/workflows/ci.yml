@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-15
@@ -38,6 +42,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
 
       - name: Build (Release)
+        # macOS minutes bill at 10x; PRs verify Debug build + tests, the
+        # Release configuration is checked on push to main only.
+        if: github.event_name == 'push'
         run: |
           xcodebuild \
             -project Murmur.xcodeproj \
