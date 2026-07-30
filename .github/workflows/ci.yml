@@ -56,7 +56,10 @@ jobs:
             -derivedDataPath build/DerivedData \
             build
 
+      # Same gate as the Release build above - this step has nothing to
+      # install without it.
       - name: Test install.sh against the Release build
+        if: github.event_name == 'push'
         run: scripts/test-install.sh
 
       - name: Run unit tests
