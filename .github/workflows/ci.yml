@@ -37,16 +37,20 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
 
+      # Built the same way release.yml builds it - ad-hoc signed via
+      # project.yml rather than unsigned - so this job exercises the artifact
+      # users actually download, and test-install.sh below can verify it.
       - name: Build (Release)
         run: |
           xcodebuild \
             -project Murmur.xcodeproj \
             -scheme Murmur \
             -configuration Release \
-            build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
+            -derivedDataPath build/DerivedData \
+            build
+
+      - name: Test install.sh against the Release build
+        run: scripts/test-install.sh
 
       - name: Run unit tests
         run: |

@@ -34,18 +34,33 @@ Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GP
 
 Each model carries its own license, accepted when you download it. See `NOTICE` for attributions.
 
-## Releases: unsigned by choice
+## Install
+
+Requires macOS 14+ on Apple Silicon. One command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/costajohnt/murmur/main/install.sh | bash
+```
+
+That downloads the latest release, installs it to `/Applications`, and clears
+the quarantine flag (see below). Set `INSTALL_DIR` to put it somewhere else.
+
+Prefer to do it by hand? Download `Murmur-<tag>.zip` from the
+[releases page](https://github.com/costajohnt/murmur/releases), unzip it, drag
+`Murmur.app` to `/Applications`, then run:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Murmur.app
+```
+
+On first launch, grant Microphone and Accessibility permissions when prompted.
+
+### Releases: unsigned by choice
 
 Tagged releases ship an ad-hoc-signed zip built by CI. There is no Apple
 Developer Program membership behind this project, so builds are not
-notarized. macOS Gatekeeper will warn on first launch — right-click the
-app and choose Open, or clear the quarantine flag:
-
-```sh
-xattr -dr com.apple.quarantine Murmur.app
-```
-
-Building from source (below) avoids the warning entirely.
+notarized. Without the quarantine flag cleared, macOS Gatekeeper refuses the
+first launch. Building from source avoids the warning entirely.
 
 ## Build & run
 
