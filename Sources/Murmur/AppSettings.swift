@@ -188,7 +188,7 @@ enum AppSettings {
 
     /// SettingsView's @AppStorage default must match this exactly — it reads
     /// the same key as its own storage, independent of this getter.
-    static let defaultSilenceAutoStopSeconds = 2.0
+    static let defaultSilenceAutoStopSeconds = 10.0
 
     /// Seconds of sustained near-silence before a listening recording
     /// auto-stops via the same path as a manual pill tap. 0 disables
