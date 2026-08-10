@@ -75,15 +75,15 @@ final class BrainstemClientTests: XCTestCase {
 
     // MARK: - Routing must happen on the RAW transcript, before cleanup
     //
-    // Live bug: routing used to check the CLEANED transcript. A tone preset
-    // (Caveman especially) can rewrite or drop "note to self" entirely, so
+    // Live bug: routing used to check the CLEANED transcript. Cleanup can
+    // rewrite or drop "note to self" entirely, so
     // the prefix silently stopped matching and the dictation pasted instead
     // of capturing. These tests pin the fix: the routing decision is made on
     // `raw`, and only the (already-stripped) remainder is ever handed to
     // cleanup — the trigger phrase is never in front of a rewriting model to
     // begin with.
 
-    /// Stand-in for an aggressive cleanup pass (e.g. the Caveman tone): it
+    /// Stand-in for an aggressive cleanup pass: it
     /// can mangle or delete a literal phrase, same as the real Ollama
     /// cleanup is free to do.
     private func aggressiveRewrite(_ text: String) -> String {
