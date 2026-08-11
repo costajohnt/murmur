@@ -133,6 +133,19 @@ enum AppSettings {
 
     private static var defaults: UserDefaults { .standard }
 
+    /// One-time launch cleanup of stored values that no longer parse (e.g. a
+    /// tone preset removed in a later version, like the old "caveman"). The
+    /// pipeline already falls back to `.faithful` for unknown raw values, but
+    /// SettingsView's @AppStorage binds to the raw string directly, so a stale
+    /// value would render the Tone picker with no selected segment. Removing
+    /// the key restores the unwritten-key default everywhere.
+    static func migrateStaleValues() {
+        if let raw = defaults.string(forKey: tonePresetKey), TonePreset(rawValue: raw) == nil {
+            Log.log("settings: removing stale tone preset \"\(raw)\", reverting to default")
+            defaults.removeObject(forKey: tonePresetKey)
+        }
+    }
+
     /// First-run gate for the permissions guide.
     /// Defaults to false (unwritten key) so a fresh install shows onboarding
     /// exactly once; set true when the user dismisses it.
