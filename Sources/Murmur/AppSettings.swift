@@ -1,17 +1,13 @@
 import Foundation
 
-/// Cleanup tone presets. Faithful/polished/casual keep the
+/// Cleanup tone presets. Every preset keeps the
 /// FULL faithful "reformat, don't answer" core — they only append a style
 /// layer on top (see `OllamaClient.systemPrompt(for:)`), so none of them can
-/// weaken the don't-answer / don't-invent guard. Caveman is the deliberate
-/// exception: compression requires rewording, which the core forbids, so it
-/// uses a standalone prompt that re-states the don't-answer / don't-invent /
-/// keep-code-verbatim guards on its own.
+/// weaken the don't-answer / don't-invent guard.
 enum TonePreset: String, CaseIterable, Identifiable {
     case faithful
     case polished
     case casual
-    case caveman
 
     var id: String { rawValue }
 
@@ -20,7 +16,6 @@ enum TonePreset: String, CaseIterable, Identifiable {
         case .faithful: return "Faithful"
         case .polished: return "Polished"
         case .casual: return "Casual"
-        case .caveman: return "Caveman"
         }
     }
 
@@ -29,7 +24,6 @@ enum TonePreset: String, CaseIterable, Identifiable {
         case .faithful: return "Fix punctuation and fillers, leave your wording alone."
         case .polished: return "Also tighten grammar so it reads cleanly, without changing meaning."
         case .casual: return "Keep the relaxed spoken tone, just clean it up."
-        case .caveman: return "Compress into terse caveman speak. Every point kept, fluff dies."
         }
     }
 }
@@ -138,6 +132,19 @@ enum AppSettings {
     static let preferredInputDeviceUIDKey = "preferredInputDeviceUID"
 
     private static var defaults: UserDefaults { .standard }
+
+    /// One-time launch cleanup of stored values that no longer parse (e.g. a
+    /// tone preset removed in a later version, like the old "caveman"). The
+    /// pipeline already falls back to `.faithful` for unknown raw values, but
+    /// SettingsView's @AppStorage binds to the raw string directly, so a stale
+    /// value would render the Tone picker with no selected segment. Removing
+    /// the key restores the unwritten-key default everywhere.
+    static func migrateStaleValues() {
+        if let raw = defaults.string(forKey: tonePresetKey), TonePreset(rawValue: raw) == nil {
+            Log.log("settings: removing stale tone preset \"\(raw)\", reverting to default")
+            defaults.removeObject(forKey: tonePresetKey)
+        }
+    }
 
     /// First-run gate for the permissions guide.
     /// Defaults to false (unwritten key) so a fresh install shows onboarding

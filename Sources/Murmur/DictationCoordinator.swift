@@ -213,12 +213,12 @@ final class DictationCoordinator {
         }
 
         // 2. Vault-capture routing decision — made on the RAW transcript,
-        // BEFORE cleanup runs. Cleanup (especially the Caveman tone) can
-        // rewrite or drop the "note to self" trigger phrase entirely, which
-        // silently broke routing when this check ran post-cleanup (observed
-        // live: a caveman-compressed transcript never matched). Empty
-        // brainstemURL still means the feature is off, so the prefix is left
-        // in place and cleaned/pasted like any other text below.
+        // BEFORE cleanup runs. Cleanup can rewrite or drop the "note to
+        // self" trigger phrase entirely, which silently broke routing when
+        // this check ran post-cleanup (observed live: a rewritten transcript
+        // never matched). Empty brainstemURL still means the feature is off,
+        // so the prefix is left in place and cleaned/pasted like any other
+        // text below.
         let brainstemURL = AppSettings.brainstemURL
         let rawRemainder = brainstemURL.isEmpty ? nil : BrainstemClient.noteToSelfRemainder(in: raw)
 

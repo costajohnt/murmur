@@ -90,6 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.log("Murmur launched (pid \(ProcessInfo.processInfo.processIdentifier))")
+        // Before any UI binds to the settings keys: drop stored values that
+        // no longer parse (e.g. a removed tone preset).
+        AppSettings.migrateStaleValues()
         _ = TargetAppTracker.shared // start tracking activations immediately
         showPill()
         #if DEBUG
