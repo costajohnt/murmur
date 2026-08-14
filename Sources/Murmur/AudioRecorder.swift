@@ -78,11 +78,13 @@ final class AudioRecorder {
     enum RecorderError: LocalizedError {
         case micDenied
         case converterUnavailable
+        case tapFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .micDenied: return "Microphone access denied (System Settings > Privacy & Security > Microphone)"
             case .converterUnavailable: return "Could not create audio converter for input format"
+            case .tapFailed(let reason): return "Could not start the microphone (\(reason)). Try again, or reconnect the input device."
             }
         }
     }
@@ -107,6 +109,15 @@ final class AudioRecorder {
         silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
         lock.unlock()
         smoothedLevel = 0
+
+        // A previous recording can leave the engine running (e.g. stop() ran
+        // while the hardware was mid-reset, or a device change restarted it
+        // under us). Reconfiguring a running engine is what leaves the input
+        // node in the inconsistent state that makes installTap raise.
+        if engine.isRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
 
         let input = engine.inputNode
         // Bind the user-chosen input device (e.g. the RØDE on the dock) before
@@ -137,9 +148,22 @@ final class AudioRecorder {
         converter = conv
 
         input.removeTap(onBus: 0)
-        // ~1600 frames at 48 kHz ≈ 33 ms per buffer → ~30 Hz level updates.
-        input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
-            self?.appendConverted(buffer)
+        // installTap raises an ObjC NSException (not a Swift error) when the
+        // node/engine state is stale — seen after long uptimes with sleep/wake
+        // and Bluetooth reconnect cycles. Uncaught, that aborts the process,
+        // so catch it in ObjC and surface it as a normal recorder error.
+        var tapError: NSError?
+        let installed = MurmurCatchNSException({
+            // ~1600 frames at 48 kHz ≈ 33 ms per buffer → ~30 Hz level updates.
+            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
+                self?.appendConverted(buffer)
+            }
+        }, &tapError)
+        guard installed else {
+            let reason = tapError?.localizedDescription ?? "unknown"
+            Log.log("recorder: installTap raised \(reason)")
+            converter = nil
+            throw RecorderError.tapFailed(reason)
         }
         engine.prepare()
         try engine.start()
