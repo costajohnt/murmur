@@ -100,11 +100,19 @@ struct AudioInputDevice: Identifiable, Hashable {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var value: CFString = "" as CFString
-        var dataSize = UInt32(MemoryLayout<CFString>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &dataSize, &value) == noErr else {
+        // Read into Unmanaged, not CFString. CoreAudio writes a +1 CFStringRef
+        // straight over the variable's storage; done to a managed `var CFString`
+        // that write goes behind ARC's back, which neither sees the incoming
+        // retain nor releases what it thinks is still there. Unmanaged is a
+        // pointer-sized POD, so taking its address is legitimate, and the +1 is
+        // then balanced explicitly — both of these selectors return an object
+        // the caller owns.
+        var value: Unmanaged<CFString>?
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &dataSize, &value) == noErr,
+              let value else {
             return nil
         }
-        return value as String
+        return value.takeRetainedValue() as String
     }
 }
