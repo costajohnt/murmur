@@ -111,6 +111,8 @@ final class DictationCoordinator {
             Log.log("record auto-stop: sustained silence, stopping")
         case .maxDuration:
             Log.log("record auto-stop: hit the \(Int(AudioRecorder.maxRecordingSeconds / 60))-minute length cap, stopping")
+        case .deviceChanged:
+            Log.log("record auto-stop: audio route changed mid-recording, stopping")
         }
         stopAndProcess()
     }

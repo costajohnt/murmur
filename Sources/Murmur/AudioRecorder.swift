@@ -14,6 +14,34 @@ final class AudioRecorder {
     private var samples: [Float] = []
     private let lock = NSLock()
 
+    /// Guarded by `lock`. `.starting` is a distinct state because binding an
+    /// input device itself posts a configuration-change notification — without
+    /// it the observer below would tear down the engine `start()` is still
+    /// setting up.
+    private enum RecordingState { case idle, starting, recording }
+    private var recordingState: RecordingState = .idle
+    private var configurationObserver: NSObjectProtocol?
+
+    init() {
+        // AVAudioEngine posts this whenever the audio graph changes under it:
+        // the default input switched, a device was unplugged, a Bluetooth mic
+        // connected. Without reacting, a recording in progress keeps pulling
+        // buffers from a device that is gone (#37).
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    deinit {
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+    }
+
     /// Live audio level (0..1, dB-mapped + attack/decay smoothed), computed in
     /// the existing input tap — no second tap. Set on the main thread, called
     /// on the audio thread; both sides go through `lock` (same one guarding
@@ -33,6 +61,9 @@ final class AudioRecorder {
         case silence
         /// Hit `maxRecordingSeconds`; the buffer is not allowed to grow further.
         case maxDuration
+        /// The audio route changed mid-recording — the device this tap is
+        /// attached to is gone or was switched.
+        case deviceChanged
     }
 
     /// Fires at most once per recording, on the audio thread, when the
@@ -117,7 +148,13 @@ final class AudioRecorder {
             throw RecorderError.micDenied
         }
 
+        // Settles to .recording or back to .idle on the way out, whichever
+        // path start() leaves by.
+        var didStart = false
+        defer { setRecordingState(didStart ? .recording : .idle) }
+
         lock.lock()
+        recordingState = .starting
         samples.removeAll()
         recordStartTime = Date()
         silenceStartTime = nil
@@ -184,6 +221,46 @@ final class AudioRecorder {
             throw error
         }
         try engine.start()
+        didStart = true
+    }
+
+    private func setRecordingState(_ state: RecordingState) {
+        lock.lock()
+        recordingState = state
+        lock.unlock()
+    }
+
+    /// Arrives on an arbitrary thread when the audio graph changes.
+    private func handleConfigurationChange() {
+        let stopForDeviceChange: Bool = {
+            lock.lock()
+            defer { lock.unlock() }
+            // .starting means this notification is the echo of our own device
+            // binding, not a route change to react to.
+            guard recordingState == .recording, !didFireAutoStop else { return false }
+            didFireAutoStop = true
+            return true
+        }()
+        if stopForDeviceChange {
+            Log.log("recorder: audio route changed mid-recording, stopping")
+            onAutoStop?(.deviceChanged)
+            return
+        }
+        guard recordingStateIsIdle else { return }
+        // Idle: drop the stale graph so the next start() rebuilds it against
+        // the current devices instead of the ones present when it was first
+        // materialized.
+        _ = try? catchingNSException("engine reset after route change") {
+            self.engine.stop()
+            self.engine.reset()
+        }
+        Log.log("recorder: audio route changed while idle, engine reset")
+    }
+
+    private var recordingStateIsIdle: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordingState == .idle
     }
 
     /// Runs `body`, turning an Objective-C NSException into a Swift error.
@@ -213,11 +290,20 @@ final class AudioRecorder {
     /// CoreAudio device on macOS; it must be done before the format is read.
     private func bindPreferredInputDevice(on input: AVAudioInputNode) {
         let uid = AppSettings.preferredInputDeviceUID
-        guard !uid.isEmpty else { return }
-        guard var deviceID = AudioInputDevice.deviceID(forUID: uid) else {
+        let resolved: AudioDeviceID?
+        if uid.isEmpty {
+            // System Default: bind whatever is default *now*. Leaving the
+            // engine on its own default meant it kept the device that was
+            // current when the input node was first materialized, so switching
+            // the system input needed an app restart to take effect (#37).
+            resolved = AudioInputDevice.systemDefault()
+        } else if let match = AudioInputDevice.deviceID(forUID: uid) {
+            resolved = match
+        } else {
             Log.log("recorder: preferred input '\(uid)' not connected; using system default")
-            return
+            resolved = AudioInputDevice.systemDefault()
         }
+        guard var deviceID = resolved else { return }
         let unit = input.audioUnit
         guard let unit else { return }
         let status = AudioUnitSetProperty(
@@ -235,6 +321,7 @@ final class AudioRecorder {
 
     /// Stops recording and returns the accumulated 16 kHz mono samples.
     func stop() -> [Float] {
+        setRecordingState(.idle)
         // Teardown touches the same graph start() does, so it can raise for the
         // same reasons. The samples are already captured and there is nothing
         // to recover, so log and carry on rather than aborting the process.
