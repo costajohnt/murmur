@@ -78,13 +78,14 @@ final class AudioRecorder {
     enum RecorderError: LocalizedError {
         case micDenied
         case converterUnavailable
-        case tapFailed(String)
+        case engineFailed(step: String, reason: String)
 
         var errorDescription: String? {
             switch self {
             case .micDenied: return "Microphone access denied (System Settings > Privacy & Security > Microphone)"
             case .converterUnavailable: return "Could not create audio converter for input format"
-            case .tapFailed(let reason): return "Could not start the microphone (\(reason)). Try again, or reconnect the input device."
+            case .engineFailed(let step, let reason):
+                return "Could not start the microphone (\(step): \(reason)). Try again, or reconnect the input device."
             }
         }
     }
@@ -115,11 +116,18 @@ final class AudioRecorder {
         // under us). Reconfiguring a running engine is what leaves the input
         // node in the inconsistent state that makes installTap raise.
         if engine.isRunning {
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
+            // Best-effort: if the graph is already stale this raises, and there
+            // is nothing to recover here — the guards below decide whether the
+            // recording can proceed.
+            _ = try? catchingNSException("engine reset") {
+                self.engine.inputNode.removeTap(onBus: 0)
+                self.engine.stop()
+            }
         }
 
-        let input = engine.inputNode
+        // Materializing the input node builds the underlying AUGraph, which is
+        // exactly what raises when that graph is stale (#35).
+        let input = try catchingNSException("input node") { self.engine.inputNode }
         // Bind the user-chosen input device (e.g. the RØDE on the dock) before
         // reading its format or installing the tap. Empty UID = System Default,
         // in which case we leave the engine on its default input untouched.
@@ -134,10 +142,10 @@ final class AudioRecorder {
         // raises an Objective-C NSException that Swift's `try` cannot catch, so
         // the process aborts (SIGABRT). Wait for the device to settle to a valid
         // format before reading it once for both the converter and the tap.
-        var inputFormat = input.outputFormat(forBus: 0)
+        var inputFormat = try catchingNSException("input format") { input.outputFormat(forBus: 0) }
         for _ in 0..<20 where inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
             try await Task.sleep(for: .milliseconds(100))
-            inputFormat = input.outputFormat(forBus: 0)
+            inputFormat = try catchingNSException("input format") { input.outputFormat(forBus: 0) }
         }
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw RecorderError.micDenied
@@ -147,26 +155,38 @@ final class AudioRecorder {
         }
         converter = conv
 
-        input.removeTap(onBus: 0)
-        // installTap raises an ObjC NSException (not a Swift error) when the
-        // node/engine state is stale — seen after long uptimes with sleep/wake
-        // and Bluetooth reconnect cycles. Uncaught, that aborts the process,
-        // so catch it in ObjC and surface it as a normal recorder error.
-        var tapError: NSError?
-        let installed = MurmurCatchNSException({
-            // ~1600 frames at 48 kHz ≈ 33 ms per buffer → ~30 Hz level updates.
-            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
-                self?.appendConverted(buffer)
+        do {
+            try catchingNSException("install tap") {
+                input.removeTap(onBus: 0)
+                // ~1600 frames at 48 kHz ≈ 33 ms per buffer → ~30 Hz level updates.
+                input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
+                    self?.appendConverted(buffer)
+                }
+                self.engine.prepare()
             }
-        }, &tapError)
-        guard installed else {
-            let reason = tapError?.localizedDescription ?? "unknown"
-            Log.log("recorder: installTap raised \(reason)")
+        } catch {
             converter = nil
-            throw RecorderError.tapFailed(reason)
+            throw error
         }
-        engine.prepare()
         try engine.start()
+    }
+
+    /// Runs `body`, turning an Objective-C NSException into a Swift error.
+    /// Every AVAudioEngine call that materializes or mutates the input graph
+    /// can raise one once that graph is stale (sleep/wake, device change), and
+    /// Swift `try` cannot intercept a raise — the process aborts instead (#33,
+    /// #35). Callers doing best-effort cleanup use `try?`.
+    @discardableResult
+    private func catchingNSException<T>(_ step: String, _ body: () -> T) throws -> T {
+        var value: T?
+        var raised: NSError?
+        let ok = MurmurCatchNSException({ value = body() }, &raised)
+        guard ok, let value else {
+            let reason = raised?.localizedDescription ?? "unknown"
+            Log.log("recorder: \(step) raised \(reason)")
+            throw RecorderError.engineFailed(step: step, reason: reason)
+        }
+        return value
     }
 
     /// Points the engine's input node at the device stored in
@@ -200,8 +220,13 @@ final class AudioRecorder {
 
     /// Stops recording and returns the accumulated 16 kHz mono samples.
     func stop() -> [Float] {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        // Teardown touches the same graph start() does, so it can raise for the
+        // same reasons. The samples are already captured and there is nothing
+        // to recover, so log and carry on rather than aborting the process.
+        _ = try? catchingNSException("engine teardown") {
+            self.engine.inputNode.removeTap(onBus: 0)
+            self.engine.stop()
+        }
         converter = nil
         lock.lock()
         defer { lock.unlock() }
