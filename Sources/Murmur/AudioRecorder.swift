@@ -27,24 +27,31 @@ final class AudioRecorder {
     private var _onLevel: ((Float) -> Void)?
     private var smoothedLevel: Float = 0
 
+    /// Why a recording stopped itself.
+    enum AutoStopReason {
+        /// Sustained near-silence for `AppSettings.silenceAutoStopSeconds`.
+        case silence
+        /// Hit `maxRecordingSeconds`; the buffer is not allowed to grow further.
+        case maxDuration
+    }
+
     /// Fires at most once per recording, on the audio thread, when the
-    /// smoothed level has stayed at/below `silenceThreshold` for
-    /// `silenceAutoStopDuration` seconds (after the grace period). Same
-    /// cross-thread setup/guard as `onLevel` above. The consumer is
+    /// recording stops itself — sustained near-silence, or the length cap.
+    /// Same cross-thread setup/guard as `onLevel` above. The consumer is
     /// responsible for hopping to the main actor and driving the same
     /// stop-and-process path as a manual stop.
-    var onSilenceTimeout: (() -> Void)? {
-        get { lock.lock(); defer { lock.unlock() }; return _onSilenceTimeout }
-        set { lock.lock(); defer { lock.unlock() }; _onSilenceTimeout = newValue }
+    var onAutoStop: ((AutoStopReason) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onAutoStop }
+        set { lock.lock(); defer { lock.unlock() }; _onAutoStop = newValue }
     }
-    private var _onSilenceTimeout: (() -> Void)?
-    /// `recordStartTime`/`silenceStartTime`/`didFireSilenceTimeout`/
+    private var _onAutoStop: ((AutoStopReason) -> Void)?
+    /// `recordStartTime`/`silenceStartTime`/`didFireAutoStop`/
     /// `silenceAutoStopDuration` below are written on the main thread in
     /// `start()` and read/written on the audio thread in
     /// `checkSilenceAutoStop()` — every access to them goes through `lock`.
     private var recordStartTime: Date?
     private var silenceStartTime: Date?
-    private var didFireSilenceTimeout = false
+    private var didFireAutoStop = false
     /// Snapshotted from AppSettings at `start()` so the audio thread never
     /// touches UserDefaults mid-recording. 0 disables auto-stop.
     private var silenceAutoStopDuration: TimeInterval = 0
@@ -67,6 +74,14 @@ final class AudioRecorder {
     /// Never auto-stop this early — the user hasn't necessarily started
     /// talking yet.
     private static let silenceGraceSeconds: TimeInterval = 1.5
+
+    /// Hard ceiling on a single recording. `samples` grows for the entire
+    /// recording at 16 kHz mono Float32 — ~64 KB/s, ~230 MB/hour — and silence
+    /// auto-stop can be switched off entirely, so a forgotten recording in a
+    /// room with any ambient noise otherwise grows until the process is killed
+    /// (#36). 15 minutes is ~58 MB and far longer than any real dictation.
+    static let maxRecordingSeconds: TimeInterval = 15 * 60
+    private static let maxSamples = Int(sampleRate * maxRecordingSeconds)
 
     let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -106,7 +121,7 @@ final class AudioRecorder {
         samples.removeAll()
         recordStartTime = Date()
         silenceStartTime = nil
-        didFireSilenceTimeout = false
+        didFireAutoStop = false
         silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
         lock.unlock()
         smoothedLevel = 0
@@ -253,9 +268,19 @@ final class AudioRecorder {
         guard convError == nil, let channel = out.floatChannelData else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
         lock.lock()
-        samples.append(contentsOf: chunk)
+        // The bound is enforced here rather than by reacting to the callback
+        // below, so memory stays capped even if the consumer never stops us.
+        if samples.count < Self.maxSamples {
+            samples.append(contentsOf: chunk)
+        }
+        let hitCap = samples.count >= Self.maxSamples && !didFireAutoStop
+        if hitCap { didFireAutoStop = true }
         lock.unlock()
         updateLevel(chunk)
+        if hitCap {
+            Log.log("recorder: hit the \(Int(Self.maxRecordingSeconds / 60))-minute recording cap, stopping")
+            onAutoStop?(.maxDuration)
+        }
     }
 
     /// RMS → dB → normalized 0..1 with asymmetric smoothing. Runs on the
@@ -275,18 +300,18 @@ final class AudioRecorder {
     }
 
     /// Accumulates time spent at/below `silenceThreshold` and fires
-    /// `onSilenceTimeout` once that exceeds `silenceAutoStopDuration`, after
+    /// `onAutoStop` once that exceeds `silenceAutoStopDuration`, after
     /// the grace period and skipped entirely when auto-stop is off (0).
     /// Runs on the audio thread, right after each level update. The
     /// shared-state check runs under `lock`; the callback itself is invoked
     /// after releasing it, both to avoid holding the (non-reentrant) lock
-    /// during arbitrary consumer code and because `onSilenceTimeout`'s own
+    /// during arbitrary consumer code and because `onAutoStop`'s own
     /// getter re-locks.
     private func checkSilenceAutoStop() {
         let shouldFire: Bool = {
             lock.lock()
             defer { lock.unlock() }
-            guard silenceAutoStopDuration > 0, !didFireSilenceTimeout,
+            guard silenceAutoStopDuration > 0, !didFireAutoStop,
                   let recordStartTime else { return false }
             let now = Date()
             guard now.timeIntervalSince(recordStartTime) >= Self.silenceGraceSeconds else { return false }
@@ -298,11 +323,11 @@ final class AudioRecorder {
             let start = silenceStartTime ?? now
             silenceStartTime = start
             guard now.timeIntervalSince(start) >= silenceAutoStopDuration else { return false }
-            didFireSilenceTimeout = true
+            didFireAutoStop = true
             return true
         }()
         if shouldFire {
-            onSilenceTimeout?()
+            onAutoStop?(.silence)
         }
     }
 

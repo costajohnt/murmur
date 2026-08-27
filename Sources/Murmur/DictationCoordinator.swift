@@ -50,7 +50,7 @@ final class DictationCoordinator {
         }
         let samples = recorder.stop()
         recorder.onLevel = nil
-        recorder.onSilenceTimeout = nil
+        recorder.onAutoStop = nil
         pillState.resetLevels()
         recordStart = nil
         targetApp = nil
@@ -74,10 +74,11 @@ final class DictationCoordinator {
             }
         }
         // Sustained near-silence (AppSettings.silenceAutoStopSeconds, 0 =
-        // off) auto-stops through the exact same path as a manual pill tap.
-        recorder.onSilenceTimeout = { [weak self] in
+        // off) and the recording length cap both auto-stop through the exact
+        // same path as a manual pill tap.
+        recorder.onAutoStop = { [weak self] reason in
             DispatchQueue.main.async {
-                self?.autoStopOnSilence()
+                self?.autoStop(reason)
             }
         }
 
@@ -98,13 +99,19 @@ final class DictationCoordinator {
     }
 
     /// Auto-stop entry point: AudioRecorder fires this at most once per
-    /// recording after `AppSettings.silenceAutoStopSeconds` of sustained
-    /// near-silence. Guarded to `.listening` so it can't fire twice or race a
-    /// manual stop/cancel, which already move the phase away from
-    /// `.listening` before this could run.
-    private func autoStopOnSilence() {
+    /// recording, for sustained near-silence or for hitting the length cap.
+    /// Guarded to `.listening` so it can't fire twice or race a manual
+    /// stop/cancel, which already move the phase away from `.listening`
+    /// before this could run. Either way the audio recorded so far is
+    /// transcribed, exactly as a manual stop would.
+    private func autoStop(_ reason: AudioRecorder.AutoStopReason) {
         guard pillState.phase == .listening else { return }
-        Log.log("record auto-stop: sustained silence, stopping")
+        switch reason {
+        case .silence:
+            Log.log("record auto-stop: sustained silence, stopping")
+        case .maxDuration:
+            Log.log("record auto-stop: hit the \(Int(AudioRecorder.maxRecordingSeconds / 60))-minute length cap, stopping")
+        }
         stopAndProcess()
     }
 
@@ -112,7 +119,7 @@ final class DictationCoordinator {
         pillState.phase = .processing
         let samples = recorder.stop()
         recorder.onLevel = nil
-        recorder.onSilenceTimeout = nil
+        recorder.onAutoStop = nil
         pillState.resetLevels()
         let durationMs = recordStart.map { Int(Date().timeIntervalSince($0) * 1000) }
         recordStart = nil
