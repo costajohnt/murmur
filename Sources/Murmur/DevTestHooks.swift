@@ -5,6 +5,18 @@ import Foundation
 import ServiceManagement
 
 extension AppDelegate {
+    /// Registers one hook. Every observer here uses `queue: .main`, so the
+    /// closure genuinely runs on the main actor — the compiler just cannot see
+    /// that through the notification API. `assumeIsolated` states that fact
+    /// once, rather than at each of the hooks below.
+    private func onMainActor(_ name: String, _ body: @escaping @MainActor (Notification) -> Void) {
+        DistributedNotificationCenter.default().addObserver(
+            forName: .init(name), object: nil, queue: .main
+        ) { note in
+            MainActor.assumeIsolated { body(note) }
+        }
+    }
+
     /// Headless test hooks (dev only): trigger flows from the command line via
     /// distributed notifications so evidence can be captured without GUI
     /// scripting. DEBUG-only — these are system-wide observers any local
@@ -12,49 +24,48 @@ extension AppDelegate {
     /// they must never exist in a release build. Example:
     ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.murmur.spikeA"), object: nil, userInfo: nil, deliverImmediately: true)'
     func registerTestHooks() {
-        let center = DistributedNotificationCenter.default()
-        center.addObserver(forName: .init("com.costajohnt.murmur.spikeA"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.spikeA") { _ in
             Log.log("test hook: spikeA triggered")
             SpikeA.run()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.spikeC"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.spikeC") { _ in
             Log.log("test hook: spikeC triggered")
             SpikeC.run()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.pillFrame"), object: nil, queue: .main) { [weak self] _ in
+        onMainActor("com.costajohnt.murmur.pillFrame") { [weak self] _ in
             guard let self, let panel = self.pillPanel, let screen = NSScreen.main else { return }
             Log.log("test hook: pillFrame = \(NSStringFromRect(panel.frame)), window id = \(panel.windowNumber), screenFrame = \(NSStringFromRect(screen.frame))")
         }
         // Pill-redesign hooks:
-        center.addObserver(forName: .init("com.costajohnt.murmur.cancelTest"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.cancelTest") { _ in
             Log.log("test hook: cancelTest triggered")
             V1TestHooks.runCancelTest()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.guardTest"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.guardTest") { _ in
             Log.log("test hook: guardTest triggered")
             V1TestHooks.runGuardTest()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.mainMenu"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.mainMenu") { _ in
             let titles = NSApp.mainMenu?.items.map(\.title) ?? []
             Log.log("MAIN MENU: policy = \(NSApp.activationPolicy().rawValue) (0 = regular), items = \(titles)")
         }
         // v1 hooks:
-        center.addObserver(forName: .init("com.costajohnt.murmur.historyTest"), object: nil, queue: .main) { note in
+        onMainActor("com.costajohnt.murmur.historyTest") { note in
             Log.log("test hook: historyTest triggered")
             V1TestHooks.runHistoryCheck(customText: note.object as? String)
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.historyCount"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.historyCount") { _ in
             V1TestHooks.logHistoryState()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.pipelineFixture"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.pipelineFixture") { _ in
             Log.log("test hook: pipelineFixture triggered")
             V1TestHooks.runPipelineOnFixture()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.meterTest"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.meterTest") { _ in
             Log.log("test hook: meterTest triggered")
             V1TestHooks.runMeterTest()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.historyDeleteNewest"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.historyDeleteNewest") { _ in
             guard let store = HistoryStore.shared, let newest = store.newest() else {
                 Log.log("DELETE CHECK: no entry to delete")
                 return
@@ -65,27 +76,27 @@ extension AppDelegate {
             let audioGone = audioPath.map { !FileManager.default.fileExists(atPath: $0) } ?? true
             Log.log("DELETE CHECK: count \(before) -> \(store.count()), audio file removed = \(audioGone) (path: \(audioPath ?? "none"))")
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.openHistory"), object: nil, queue: .main) { [weak self] note in
+        onMainActor("com.costajohnt.murmur.openHistory") { [weak self] note in
             let appearance = note.object as? String
             Log.log("test hook: openHistory (\(appearance ?? "system"))")
             self?.openHistory(appearance: appearance)
         }
         // Settings hooks:
-        center.addObserver(forName: .init("com.costajohnt.murmur.openSettings"), object: nil, queue: .main) { [weak self] note in
+        onMainActor("com.costajohnt.murmur.openSettings") { [weak self] note in
             let appearance = note.object as? String
             Log.log("test hook: openSettings (\(appearance ?? "system"))")
             self?.openSettings(appearance: appearance)
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.settingsStatus"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.settingsStatus") { _ in
             Log.log("test hook: settingsStatus triggered")
             V1TestHooks.logSettingsStatus()
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.hotkeyApply"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.hotkeyApply") { _ in
             Log.log("test hook: hotkeyApply triggered")
             HotkeyManager.shared.apply()
             Log.log("HOTKEY STATE: registered = \(HotkeyManager.shared.registeredBinding?.rawValue ?? "none")")
         }
-        center.addObserver(forName: .init("com.costajohnt.murmur.loginToggleTest"), object: nil, queue: .main) { _ in
+        onMainActor("com.costajohnt.murmur.loginToggleTest") { _ in
             Log.log("test hook: loginToggleTest triggered")
             V1TestHooks.runLoginToggleTest()
         }
