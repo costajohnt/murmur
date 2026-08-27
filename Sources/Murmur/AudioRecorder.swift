@@ -153,14 +153,7 @@ final class AudioRecorder {
         var didStart = false
         defer { setRecordingState(didStart ? .recording : .idle) }
 
-        lock.lock()
-        recordingState = .starting
-        samples.removeAll()
-        recordStartTime = Date()
-        silenceStartTime = nil
-        didFireAutoStop = false
-        silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
-        lock.unlock()
+        resetForNewRecording()
         smoothedLevel = 0
 
         // A previous recording can leave the engine running (e.g. stop() ran
@@ -222,6 +215,21 @@ final class AudioRecorder {
         }
         try engine.start()
         didStart = true
+    }
+
+    /// Synchronous on purpose: `NSLock` may not be taken directly from an
+    /// async context (an error in the Swift 6 language mode). There is no
+    /// suspension point inside this critical section, so nothing about the
+    /// locking itself changes by moving it here.
+    private func resetForNewRecording() {
+        lock.lock()
+        defer { lock.unlock() }
+        recordingState = .starting
+        samples.removeAll()
+        recordStartTime = Date()
+        silenceStartTime = nil
+        didFireAutoStop = false
+        silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
     }
 
     private func setRecordingState(_ state: RecordingState) {

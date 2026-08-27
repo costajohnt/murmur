@@ -80,6 +80,7 @@ struct MurmurApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not private: the DEBUG-only test hooks in DevTestHooks.swift read this
     // directly (e.g. to log the pill's current frame).
