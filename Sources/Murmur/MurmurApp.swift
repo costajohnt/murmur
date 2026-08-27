@@ -93,6 +93,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before any UI binds to the settings keys: drop stored values that
         // no longer parse (e.g. a removed tone preset).
         AppSettings.migrateStaleValues()
+        // Open the store now rather than at first save, so a store that cannot
+        // be opened becomes a menubar warning instead of dictations silently
+        // never being persisted (#38).
+        _ = HistoryStore.shared
+        if let failure = HistoryStore.openFailure {
+            AppStatus.shared.report(failure)
+        }
         _ = TargetAppTracker.shared // start tracking activations immediately
         showPill()
         #if DEBUG
