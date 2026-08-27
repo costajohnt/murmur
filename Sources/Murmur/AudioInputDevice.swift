@@ -25,6 +25,23 @@ struct AudioInputDevice: Identifiable, Hashable {
         available().first { $0.uid == uid }?.id
     }
 
+    /// The device CoreAudio considers the default input *right now*. Read on
+    /// every recording rather than cached, so switching the system input
+    /// (AirPods, a USB mic) takes effect on the next recording (#37).
+    static func systemDefault() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var id = AudioDeviceID(0)
+        var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &id
+        ) == noErr, id != AudioDeviceID(kAudioObjectUnknown) else { return nil }
+        return id
+    }
+
     // MARK: - CoreAudio property plumbing
 
     private static func deviceIDs() -> [AudioDeviceID] {
