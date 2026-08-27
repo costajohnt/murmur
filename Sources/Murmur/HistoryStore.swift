@@ -97,14 +97,71 @@ final class HistoryStore {
     static let maxEntries = 200
     static let audioRetentionDays = 30
 
+    /// Set when the store could not be opened on the first try. The app
+    /// surfaces this at launch: without it, a store that fails to open just
+    /// means every dictation silently stops being saved, with the only trace
+    /// in the debug log (#38).
+    static private(set) var openFailure: String?
+
     static let shared: HistoryStore? = {
         do {
             return try HistoryStore()
         } catch {
             Log.log("history: FAILED to open store: \(error)")
-            return nil
+            // A corrupt file or a schema SwiftData can no longer migrate fails
+            // identically on every future launch, so retry once against a fresh
+            // store. The old files are moved aside, never deleted — they are the
+            // user's history and may still be recoverable by hand.
+            do {
+                let archive = try archiveUnopenableStore(in: supportDir)
+                let store = try HistoryStore()
+                openFailure = "History could not be opened and has been reset. Your previous history was kept at \(archive.path)."
+                Log.log("history: opened a fresh store; previous store archived at \(archive.path)")
+                return store
+            } catch let recoveryError {
+                openFailure = "History is unavailable, so dictations are not being saved (\(error.localizedDescription))."
+                Log.log("history: recovery FAILED, running without persistence: \(recoveryError)")
+                return nil
+            }
         }
     }()
+
+    enum StoreRecoveryError: LocalizedError {
+        case nothingToArchive
+
+        var errorDescription: String? {
+            switch self {
+            case .nothingToArchive:
+                return "No existing store file to move aside"
+            }
+        }
+    }
+
+    /// Moves an unopenable store and its SQLite siblings into a timestamped
+    /// subdirectory of `dir`, so a fresh store can take its place. Returns the
+    /// directory they were moved into.
+    ///
+    /// Throws `nothingToArchive` when there is no store file to move: the open
+    /// then failed for some other reason (disk full, permissions), and retrying
+    /// against the same state would fail the same way.
+    static func archiveUnopenableStore(in dir: URL) throws -> URL {
+        let fm = FileManager.default
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let archive = dir.appendingPathComponent("history-unopenable-\(stamp)", isDirectory: true)
+        try fm.createDirectory(at: archive, withIntermediateDirectories: true)
+        var moved = 0
+        for suffix in ["", "-wal", "-shm"] {
+            let source = dir.appendingPathComponent("history.store" + suffix)
+            guard fm.fileExists(atPath: source.path) else { continue }
+            try fm.moveItem(at: source, to: archive.appendingPathComponent(source.lastPathComponent))
+            moved += 1
+        }
+        guard moved > 0 else {
+            try? fm.removeItem(at: archive)
+            throw StoreRecoveryError.nothingToArchive
+        }
+        return archive
+    }
 
     let container: ModelContainer
     var context: ModelContext { container.mainContext }
