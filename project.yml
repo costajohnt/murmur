@@ -27,6 +27,12 @@ targets:
       properties:
         CFBundleName: Murmur
         CFBundleDisplayName: Murmur
+        # Set here, not in Sources/Info.plist: xcodegen regenerates that file
+        # from this block on every `xcodegen generate`, which is why the bundle
+        # version sat at the 1.0/1 default through v1.0.0, v1.1.0 and v1.2.0
+        # while the git tag was the only real version of record.
+        CFBundleShortVersionString: "1.3.0"
+        CFBundleVersion: "4"
         # Regular app (no LSUIElement): dock icon + app switcher + real main
         # menu. Closing the History window keeps the pill/menubar running; only
         # ⌘Q quits.
