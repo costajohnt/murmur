@@ -15,6 +15,12 @@ if [[ -n "${DEVELOPMENT_TEAM:-}" ]]; then
     DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
     CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Apple Development}"
   )
+elif [[ -z "${CODE_SIGN_IDENTITY:-}" ]] \
+     && security find-identity -v -p codesigning 2>/dev/null \
+        | grep -q "Murmur Dev Signing"; then
+  # Use the local self-signed cert so TCC grants survive rebuilds.
+  # Create it once with:  scripts/create-signing-cert.sh
+  SIGN_ARGS+=( CODE_SIGN_IDENTITY="Murmur Dev Signing" )
 fi
 
 xcodebuild \

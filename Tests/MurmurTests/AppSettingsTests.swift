@@ -1,7 +1,7 @@
 import XCTest
 
 /// Covers CleanupMode: the three modes are distinct and correctly identified,
-/// and the RAM-gated unwritten-key default matches this Mac's physical memory.
+/// and the unwritten-key default is always `.off`.
 final class AppSettingsTests: XCTestCase {
     func testCleanupModeHasThreeDistinctCases() {
         XCTAssertEqual(CleanupMode.allCases.count, 3)
@@ -21,25 +21,23 @@ final class AppSettingsTests: XCTestCase {
         }
     }
 
-    /// With no stored key, the default is RAM-gated: >32 GB → .full, else .off.
-    /// Assert it matches THIS machine so the gate is exercised end-to-end.
-    func testUnwrittenDefaultIsRamGated() {
+    /// With no stored key, the default is always `.off` so Murmur works out
+    /// of the box without Ollama.
+    func testUnwrittenDefaultIsOff() {
         UserDefaults.standard.removeObject(forKey: AppSettings.cleanupModeKey)
-        let expected: CleanupMode =
-            ProcessInfo.processInfo.physicalMemory > 32 * 1024 * 1024 * 1024 ? .full : .off
-        XCTAssertEqual(AppSettings.cleanupMode, expected)
+        XCTAssertEqual(AppSettings.cleanupMode, .off)
     }
 
     // MARK: - Stale-value migration
     //
     // A tone preset stored by an older version can stop parsing when the
-    // preset is removed (the "caveman" case). The pipeline falls back to
-    // .faithful, but SettingsView's @AppStorage binds to the raw string, so
-    // the stale value must be removed at launch or the Tone picker renders
-    // with no selected segment.
+    // preset is removed. The pipeline falls back to .faithful, but
+    // SettingsView's @AppStorage binds to the raw string, so the stale value
+    // must be removed at launch or the Tone picker renders with no selected
+    // segment.
 
     func testMigrationRemovesUnparseableTonePreset() {
-        UserDefaults.standard.set("caveman", forKey: AppSettings.tonePresetKey)
+        UserDefaults.standard.set("removed_preset", forKey: AppSettings.tonePresetKey)
         AppSettings.migrateStaleValues()
         XCTAssertNil(UserDefaults.standard.string(forKey: AppSettings.tonePresetKey),
                      "a raw value that no longer parses must be removed, not left to confuse @AppStorage")

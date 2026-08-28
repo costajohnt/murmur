@@ -33,8 +33,6 @@ enum TextInjector {
 
         guard AXIsProcessTrusted() else {
             Log.log("inject FAILED: Accessibility permission not granted (System Settings > Privacy & Security > Accessibility)")
-            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
             completion?(false, "Accessibility permission not granted")
             return
         }

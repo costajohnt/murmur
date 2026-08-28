@@ -134,11 +134,11 @@ enum AppSettings {
     private static var defaults: UserDefaults { .standard }
 
     /// One-time launch cleanup of stored values that no longer parse (e.g. a
-    /// tone preset removed in a later version, like the old "caveman"). The
-    /// pipeline already falls back to `.faithful` for unknown raw values, but
-    /// SettingsView's @AppStorage binds to the raw string directly, so a stale
-    /// value would render the Tone picker with no selected segment. Removing
-    /// the key restores the unwritten-key default everywhere.
+    /// tone preset removed in a later version). The pipeline already falls back
+    /// to `.faithful` for unknown raw values, but SettingsView's @AppStorage
+    /// binds to the raw string directly, so a stale value would render the Tone
+    /// picker with no selected segment. Removing the key restores the
+    /// unwritten-key default everywhere.
     static func migrateStaleValues() {
         if let raw = defaults.string(forKey: tonePresetKey), TonePreset(rawValue: raw) == nil {
             Log.log("settings: removing stale tone preset \"\(raw)\", reverting to default")
@@ -161,18 +161,16 @@ enum AppSettings {
         ProcessInfo.processInfo.physicalMemory > 32 * 1024 * 1024 * 1024
     }
 
-    /// How much cleanup to run on the next dictation. The unwritten-key
-    /// default is RAM-gated: Macs with more than 32 GB default to `.full`
-    /// (an M5 Max / 64 GB runs the 7B history-aware path comfortably), while
-    /// smaller Macs (M4 / 24 GB) default to `.off` so the first dictation is
-    /// instant rather than paying a cold model load. Once the user picks a
-    /// mode in Settings the stored value wins.
+    /// How much cleanup to run on the next dictation. Defaults to `.off`
+    /// so Murmur works out of the box with just Parakeet and no Ollama
+    /// dependency. Users who want LLM cleanup can enable it in Settings.
+    /// Once the user picks a mode the stored value wins.
     static var cleanupMode: CleanupMode {
         if let raw = defaults.string(forKey: cleanupModeKey),
            let mode = CleanupMode(rawValue: raw) {
             return mode
         }
-        return isHighMemoryMachine ? .full : .off
+        return .off
     }
 
     /// nil = Auto (the RAM-based resolve). Stored as "" for @AppStorage.
