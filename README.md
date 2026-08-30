@@ -20,7 +20,7 @@ Four-stage local pipeline, each stage on the right piece of Apple Silicon:
 
 1. **Capture**: `AVAudioEngine` records mic audio on trigger.
 2. **Transcribe**: [FluidAudio](https://github.com/FluidInference/FluidAudio) runs NVIDIA Parakeet via CoreML on the **Apple Neural Engine** (~66 MB, leaves the GPU free).
-3. **Clean up** (optional): a small local LLM served by **Ollama** (on the GPU) fixes punctuation, removes filler words, and formats — it reformats, never answers. Three modes in Settings: **Off** (default on ≤32 GB Macs — the raw transcript is injected instantly, no Ollama involved), **Light** (LLM cleanup, no history context), and **Full** (default on >32 GB Macs — recent dictations are fed back as context so it learns your vocabulary, e.g. proper nouns, automatically).
+3. **Clean up** (optional): a small local LLM served by **Ollama** (on the GPU) fixes punctuation, removes filler words, and formats — it reformats, never answers. Three modes in Settings: **Off** (the default on every Mac — the raw transcript is injected instantly, no Ollama involved), **Light** (LLM cleanup, no history context), and **Full** (recent dictations are fed back as context so it learns your vocabulary, e.g. proper nouns, automatically).
 4. **Inject**: pasteboard-then-paste (`CGEvent` ⌘V) drops the text at the cursor.
 
 Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GPU, both stay resident with no contention even on a 24 GB machine.
@@ -80,7 +80,7 @@ scripts/run.sh     # launch the built Murmur.app
 ## Targets
 
 - Apple **M4 / 24 GB**: tight-memory target; cleanup mode defaults to **Off** (raw transcript, instant). Switching to Light/Full in Settings uses `llama3.2:3b`.
-- Apple **M5 Max / 64 GB**: cleanup mode defaults to **Full**, using `qwen2.5:7b`.
+- Apple **M5 Max / 64 GB**: cleanup mode also defaults to **Off**; switching to Light/Full uses `qwen2.5:7b`.
 
 ## License
 

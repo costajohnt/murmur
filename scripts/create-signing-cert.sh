@@ -16,16 +16,16 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -q "$CERT_NAME"; 
   exit 0
 fi
 
-echo "Opening Keychain Access Certificate Assistant..."
+echo "Opening Keychain Access..."
 echo
-echo "In the dialog that opens:"
+echo "In Keychain Access choose Keychain Access > Certificate Assistant > Create a Certificate..., then:"
 echo "  Name:             $CERT_NAME"
 echo "  Identity Type:    Self Signed Root"
 echo "  Certificate Type: Code Signing"
 echo "  Then click Create, then Done."
 echo
 
-# Open Keychain Access Certificate Assistant directly
+# Open Keychain Access; Certificate Assistant is only reachable from its menu
 open -b com.apple.keychainaccess
 
 echo "After creating the certificate, verify with:"
