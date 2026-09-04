@@ -329,7 +329,6 @@ final class AudioRecorder {
 
     /// Stops recording and returns the accumulated 16 kHz mono samples.
     func stop() -> [Float] {
-        setRecordingState(.idle)
         // Teardown touches the same graph start() does, so it can raise for the
         // same reasons. The samples are already captured and there is nothing
         // to recover, so log and carry on rather than aborting the process.
@@ -337,6 +336,14 @@ final class AudioRecorder {
             self.engine.inputNode.removeTap(onBus: 0)
             self.engine.stop()
         }
+        // Only now go idle. The configuration-change observer runs on the
+        // posting thread and resets the engine when it sees .idle; flipping
+        // state before the teardown let a route change land inside it and
+        // stop/reset the engine concurrently with removeTap/stop above (#50).
+        // A notification during the teardown instead sees .recording and at
+        // worst fires onAutoStop(.deviceChanged), which the coordinator drops
+        // because its phase already left .listening.
+        setRecordingState(.idle)
         converter = nil
         lock.lock()
         defer { lock.unlock() }
