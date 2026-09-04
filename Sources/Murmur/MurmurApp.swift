@@ -18,9 +18,18 @@ final class AppStatus: ObservableObject {
         Log.log("status surfaced to user: \(message)")
     }
 
+    /// A condition that outlives any one dictation: the history store failed
+    /// to open, so nothing is being saved until the next launch. Reported at
+    /// launch and re-armed by every `clearError()`, so a clean dictation (or
+    /// "Dismiss Warning") cannot hide it while it still holds (#49).
+    static var persistentWarning: String? {
+        HistoryStore.shared == nil ? HistoryStore.openFailure : nil
+    }
+
     func clearError() {
-        guard lastError != nil else { return }
-        lastError = nil
+        let persistent = Self.persistentWarning
+        guard lastError != persistent else { return }
+        lastError = persistent
     }
 }
 
@@ -33,8 +42,12 @@ struct MurmurApp: App {
         MenuBarExtra("Murmur", systemImage: status.lastError == nil ? "waveform.circle" : "exclamationmark.triangle.fill") {
             if let error = status.lastError {
                 Text("⚠︎ \(error)")
-                Button("Dismiss Warning") {
-                    status.clearError()
+                // No dismiss for the persistent warning: clearError() would
+                // re-arm it on the spot, so the button would look broken.
+                if error != AppStatus.persistentWarning {
+                    Button("Dismiss Warning") {
+                        status.clearError()
+                    }
                 }
                 Divider()
             }
