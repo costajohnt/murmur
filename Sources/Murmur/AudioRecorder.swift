@@ -363,19 +363,29 @@ final class AudioRecorder {
         guard convError == nil, let channel = out.floatChannelData else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
         lock.lock()
-        // The bound is enforced here rather than by reacting to the callback
-        // below, so memory stays capped even if the consumer never stops us.
-        if samples.count < Self.maxSamples {
-            samples.append(contentsOf: chunk)
-        }
-        let hitCap = samples.count >= Self.maxSamples && !didFireAutoStop
-        if hitCap { didFireAutoStop = true }
+        let hitCap = Self.append(chunk, to: &samples, cap: Self.maxSamples, didFireAutoStop: &didFireAutoStop)
         lock.unlock()
         updateLevel(chunk)
         if hitCap {
             Log.log("recorder: hit the \(Int(Self.maxRecordingSeconds / 60))-minute recording cap, stopping")
             onAutoStop?(.maxDuration)
         }
+    }
+
+    /// The append-with-cap step of the tap callback, pure so the cap can be
+    /// tested without an engine (#51). The bound is enforced here rather than
+    /// by reacting to the auto-stop callback, so memory stays capped even if
+    /// the consumer never stops us: a chunk is appended only while the buffer
+    /// is below `cap`, so the buffer overshoots `cap` by at most one chunk.
+    /// Returns true exactly once, the first time the buffer reaches `cap`
+    /// with `didFireAutoStop` still false, and latches the flag.
+    static func append(_ chunk: [Float], to samples: inout [Float], cap: Int, didFireAutoStop: inout Bool) -> Bool {
+        if samples.count < cap {
+            samples.append(contentsOf: chunk)
+        }
+        let hitCap = samples.count >= cap && !didFireAutoStop
+        if hitCap { didFireAutoStop = true }
+        return hitCap
     }
 
     /// RMS → dB → normalized 0..1 with asymmetric smoothing. Runs on the
