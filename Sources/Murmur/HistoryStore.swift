@@ -112,19 +112,35 @@ final class HistoryStore {
             // identically on every future launch, so retry once against a fresh
             // store. The old files are moved aside, never deleted — they are the
             // user's history and may still be recoverable by hand.
+            // Tracked outside the inner do: if the archive succeeded but the
+            // fresh store still failed, the user's files have already moved
+            // and the message must say where (#51).
+            var archive: URL?
             do {
-                let archive = try archiveUnopenableStore(in: supportDir)
+                let moved = try archiveUnopenableStore(in: supportDir)
+                archive = moved
                 let store = try HistoryStore()
-                openFailure = "History could not be opened and has been reset. Your previous history was kept at \(archive.path)."
-                Log.log("history: opened a fresh store; previous store archived at \(archive.path)")
+                openFailure = "History could not be opened and has been reset. Your previous history was kept at \(moved.path)."
+                Log.log("history: opened a fresh store; previous store archived at \(moved.path)")
                 return store
             } catch let recoveryError {
-                openFailure = "History is unavailable, so dictations are not being saved (\(error.localizedDescription))."
+                openFailure = unavailableMessage(reason: error.localizedDescription, archivedAt: archive)
                 Log.log("history: recovery FAILED, running without persistence: \(recoveryError)")
                 return nil
             }
         }
     }()
+
+    /// The warning shown when the store could not be opened at all. Names the
+    /// archive directory when recovery moved the old store aside before the
+    /// retry also failed, so the user knows their history was not deleted.
+    static func unavailableMessage(reason: String, archivedAt archive: URL?) -> String {
+        var message = "History is unavailable, so dictations are not being saved (\(reason))."
+        if let archive {
+            message += " Your previous history was moved to \(archive.path)."
+        }
+        return message
+    }
 
     enum StoreRecoveryError: LocalizedError {
         case nothingToArchive

@@ -57,10 +57,11 @@ targets:
   # Unit tests for pure logic (audit item A6). No host application: the
   # SwiftUI App entry point makes @testable-importing the Murmur executable
   # target impractical without launching the whole app (mic/hotkey/Ollama
-  # side effects). Instead the specific Foundation-only source files under
-  # test are compiled a second time directly into this bundle - they have no
-  # UI/AVFoundation/networking side effects at import time, only at call
-  # time, and the tests below never invoke the networking or mic paths.
+  # side effects). Instead the specific source files under test are compiled
+  # a second time directly into this bundle - they have no UI/AVFoundation/
+  # networking side effects at import time, only at call time, and the tests
+  # below never invoke the networking or mic paths (AudioRecorder is here
+  # only for its pure static append-with-cap step, #51).
   MurmurTests:
     type: bundle.unit-test
     platform: macOS
@@ -73,6 +74,8 @@ targets:
       - path: Sources/Murmur/OllamaClient.swift
       - path: Sources/Murmur/HistoryStore.swift
       - path: Sources/Murmur/BrainstemClient.swift
+      - path: Sources/Murmur/AudioRecorder.swift
+      - path: Sources/Murmur/AudioInputDevice.swift
       - path: Sources/Murmur/ObjCExceptionBridge.m
       - path: Sources/Murmur/ObjCExceptionBridge.h
     settings:
