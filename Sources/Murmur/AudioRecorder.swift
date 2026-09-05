@@ -10,7 +10,6 @@ final class AudioRecorder {
     static let sampleRate = 16_000.0
 
     private let engine = AVAudioEngine()
-    private var converter: AVAudioConverter?
     private var samples: [Float] = []
     private let lock = NSLock()
 
@@ -195,23 +194,23 @@ final class AudioRecorder {
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw RecorderError.micDenied
         }
-        guard let conv = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw RecorderError.converterUnavailable
         }
-        converter = conv
 
-        do {
-            try catchingNSException("install tap") {
-                input.removeTap(onBus: 0)
-                // ~1600 frames at 48 kHz ≈ 33 ms per buffer → ~30 Hz level updates.
-                input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
-                    self?.appendConverted(buffer)
-                }
-                self.engine.prepare()
+        try catchingNSException("install tap") {
+            input.removeTap(onBus: 0)
+            // ~1600 frames at 48 kHz ≈ 33 ms per buffer → ~30 Hz level updates.
+            // The converter is captured by the tap closure, not stored on self:
+            // the callback runs on the audio thread and `removeTap` does not
+            // wait for an in-flight callback, so a shared var would be read
+            // there while stop() nils it on the main thread with no lock (#55).
+            // Owned by the closure, it lives exactly as long as the tap does and
+            // no thread ever reads a reference another is releasing.
+            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
+                self?.appendConverted(buffer, using: converter)
             }
-        } catch {
-            converter = nil
-            throw error
+            self.engine.prepare()
         }
         try engine.start()
         didStart = true
@@ -344,14 +343,12 @@ final class AudioRecorder {
         // worst fires onAutoStop(.deviceChanged), which the coordinator drops
         // because its phase already left .listening.
         setRecordingState(.idle)
-        converter = nil
         lock.lock()
         defer { lock.unlock() }
         return samples
     }
 
-    private func appendConverted(_ buffer: AVAudioPCMBuffer) {
-        guard let converter else { return }
+    private func appendConverted(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter) {
         let ratio = AudioRecorder.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
         guard let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
