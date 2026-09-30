@@ -19,6 +19,13 @@ final class AudioRecorder {
     /// setting up.
     private enum RecordingState { case idle, starting, recording }
     private var recordingState: RecordingState = .idle
+    /// Guarded by `lock`. When `engine.start()` returned for this recording.
+    private var engineStartedAt: Date?
+    /// Starting an engine on a freshly bound device posts one more
+    /// configuration change shortly after `start()` returns, while audio keeps
+    /// flowing. A change inside this window with the engine still running is
+    /// that echo, not a route change.
+    private static let startEchoWindow: TimeInterval = 1.0
     private var configurationObserver: NSObjectProtocol?
 
     init() {
@@ -186,10 +193,16 @@ final class AudioRecorder {
         // raises an Objective-C NSException that Swift's `try` cannot catch, so
         // the process aborts (SIGABRT). Wait for the device to settle to a valid
         // format before reading it once for both the converter and the tap.
-        var inputFormat = try catchingNSException("input format") { input.outputFormat(forBus: 0) }
+        //
+        // Read the hardware side (`inputFormat`), not `outputFormat`: after
+        // binding a device whose rate differs from the one the node was
+        // materialized on (AirPods Max in HFP run at 24 kHz, the built-in mic
+        // at 48 kHz), `outputFormat` still reports the old rate, and a tap in
+        // that format raises "Failed to create tap due to format mismatch".
+        var inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
         for _ in 0..<20 where inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
             try await Task.sleep(for: .milliseconds(100))
-            inputFormat = try catchingNSException("input format") { input.outputFormat(forBus: 0) }
+            inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
         }
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw RecorderError.micDenied
@@ -213,6 +226,9 @@ final class AudioRecorder {
             self.engine.prepare()
         }
         try engine.start()
+        lock.lock()
+        engineStartedAt = Date()
+        lock.unlock()
         didStart = true
     }
 
@@ -245,6 +261,12 @@ final class AudioRecorder {
             // .starting means this notification is the echo of our own device
             // binding, not a route change to react to.
             guard recordingState == .recording, !didFireAutoStop else { return false }
+            if let engineStartedAt,
+               Date().timeIntervalSince(engineStartedAt) < Self.startEchoWindow,
+               engine.isRunning {
+                Log.log("recorder: configuration change right after start, engine still running; keeping the recording")
+                return false
+            }
             didFireAutoStop = true
             return true
         }()
