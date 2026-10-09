@@ -53,6 +53,15 @@ jobs:
             -derivedDataPath build/DerivedData \
             build
 
+      # Main pushes only: PR runs never get the signing secrets. Catches a
+      # broken signing step before a tag does.
+      - name: Sign with the release cert
+        if: github.event_name == 'push'
+        env:
+          MURMUR_SIGNING_P12: ${{ secrets.MURMUR_SIGNING_P12 }}
+          MURMUR_SIGNING_P12_PASSWORD: ${{ secrets.MURMUR_SIGNING_P12_PASSWORD }}
+        run: scripts/sign-release.sh build/DerivedData/Build/Products/Release/Murmur.app
+
       # Same gate as the Release build above - this step has nothing to
       # install without it.
       - name: Test install.sh against the Release build
