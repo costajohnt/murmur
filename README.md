@@ -36,7 +36,13 @@ Each model carries its own license, accepted when you download it. See `NOTICE` 
 
 ## Install
 
-Requires macOS 14+ on Apple Silicon. One command:
+Requires macOS 14+ on Apple Silicon. With [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask costajohnt/tap/murmur
+```
+
+`brew upgrade` picks up new releases. Without Homebrew, one command:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/costajohnt/murmur/main/install.sh | bash
@@ -55,12 +61,18 @@ xattr -dr com.apple.quarantine /Applications/Murmur.app
 
 On first launch, grant Microphone and Accessibility permissions when prompted.
 
-### Releases: unsigned by choice
+### Releases: self-signed, not notarized
 
-Tagged releases ship an ad-hoc-signed zip built by CI. There is no Apple
-Developer Program membership behind this project, so builds are not
-notarized. Without the quarantine flag cleared, macOS Gatekeeper refuses the
-first launch. Building from source avoids the warning entirely.
+Tagged releases are signed by CI with a long-lived self-signed certificate
+(`scripts/sign-release.sh`). Every release carries the same signing identity,
+so macOS keeps your Microphone and Accessibility grants when you upgrade
+(releases up to v1.3.0 were ad-hoc signed, so the first upgrade past them asks
+once more).
+
+There is no Apple Developer Program membership behind this project, so builds
+are not notarized. Without the quarantine flag cleared, macOS Gatekeeper
+refuses the first launch; the Homebrew cask and `install.sh` both clear it.
+Building from source avoids the warning entirely.
 
 ## Build & run
 

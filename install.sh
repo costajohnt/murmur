@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/costajohnt/murmur/main/install.sh | bash
 #
-# Releases are ad-hoc signed, not notarized (no Apple Developer Program
+# Releases are self-signed, not notarized (no Apple Developer Program
 # membership behind this project), so this script clears the quarantine flag
 # that would otherwise make Gatekeeper refuse the first launch. Building from
 # source avoids the download path entirely - see README.
@@ -73,7 +73,7 @@ echo "==> Installing to $INSTALL_DIR/Murmur.app"
 rm -rf "${INSTALL_DIR:?}/Murmur.app"
 ditto "$tmp/extracted/Murmur.app" "$INSTALL_DIR/Murmur.app"
 
-# Unsigned download: without this, Gatekeeper reports the app as damaged.
+# Not notarized: without this, Gatekeeper reports the app as damaged.
 xattr -dr com.apple.quarantine "$INSTALL_DIR/Murmur.app"
 
 echo

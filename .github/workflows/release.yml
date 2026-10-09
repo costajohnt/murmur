@@ -1,9 +1,13 @@
 name: Release
 
-# Builds an ad-hoc-signed Release Murmur.app and attaches it as a zip to the
-# GitHub release for the pushed tag. Not notarized: Gatekeeper will warn on
-# first launch (right-click > Open, or `xattr -dr com.apple.quarantine`).
-# Proper Developer ID signing + notarization needs cert secrets (issue #25).
+# Builds a Release Murmur.app, signs it with the project's self-signed cert
+# (scripts/sign-release.sh: keeps Microphone/Accessibility grants across
+# upgrades), attaches it as a zip to the GitHub release for the pushed tag, and
+# bumps the cask in costajohnt/homebrew-tap. Not notarized: install.sh and the
+# cask clear the quarantine flag so Gatekeeper does not refuse the first launch.
+#
+# Secrets: MURMUR_SIGNING_P12 (base64 .p12), MURMUR_SIGNING_P12_PASSWORD,
+# TAP_DEPLOY_KEY (write deploy key on costajohnt/homebrew-tap).
 on:
   push:
     tags: ["v*"]
@@ -40,6 +44,12 @@ jobs:
             -derivedDataPath build/DerivedData \
             build
 
+      - name: Sign with the release cert
+        env:
+          MURMUR_SIGNING_P12: ${{ secrets.MURMUR_SIGNING_P12 }}
+          MURMUR_SIGNING_P12_PASSWORD: ${{ secrets.MURMUR_SIGNING_P12_PASSWORD }}
+        run: scripts/sign-release.sh build/DerivedData/Build/Products/Release/Murmur.app
+
       - name: Zip app bundle
         run: |
           ditto -c -k --keepParent \
@@ -53,3 +63,21 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" "Murmur-${GITHUB_REF_NAME}.zip" --clobber \
             || gh release create "$GITHUB_REF_NAME" "Murmur-${GITHUB_REF_NAME}.zip" \
                  --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Bump the Homebrew cask
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sha="$(shasum -a 256 "Murmur-${GITHUB_REF_NAME}.zip" | cut -d' ' -f1)"
+          key="$RUNNER_TEMP/tap_key"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$key" && chmod 600 "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:costajohnt/homebrew-tap.git "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          sed -i '' -e "s/^  version \".*\"/  version \"$version\"/" \
+                    -e "s/^  sha256 \".*\"/  sha256 \"$sha\"/" Casks/murmur.rb
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -am "murmur $version"
+          git push origin HEAD:main
