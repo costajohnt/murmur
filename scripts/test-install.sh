@@ -20,6 +20,19 @@ trap 'rm -rf "$work"' EXIT
 # Same packaging command as the release workflow's "Zip app bundle" step.
 ditto -c -k --keepParent "$APP" "$work/Murmur-test.zip"
 
+# A local build isn't signed with the release cert, so pin its own designated
+# requirement: the installer's signer check still runs, against this build.
+local_req="$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^#* *designated => //p')"
+export MURMUR_REQUIREMENT="$local_req"
+
+# The signer check must refuse a bundle that doesn't match the pin.
+if INSTALL_DIR="$work/Refused" MURMUR_ZIP="$work/Murmur-test.zip" \
+   MURMUR_REQUIREMENT='identifier "com.costajohnt.murmur" and certificate leaf = H"0000000000000000000000000000000000000000"' \
+   bash install.sh >"$work/refused.log" 2>&1; then
+  echo "FAIL: install.sh installed a bundle that doesn't match the pinned signer"; exit 1
+fi
+[ ! -e "$work/Refused/Murmur.app" ] || { echo "FAIL: refused bundle was still copied"; exit 1; }
+
 INSTALL_DIR="$work/Applications" MURMUR_ZIP="$work/Murmur-test.zip" \
   bash install.sh >"$work/install.log" 2>&1 \
   || { echo "FAIL: install.sh exited non-zero"; cat "$work/install.log"; exit 1; }
