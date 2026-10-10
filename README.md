@@ -10,9 +10,10 @@ Click the floating pill (or an optional global hotkey), speak, and the cleaned-u
 
 ## Fully local, private by design
 
-- Audio is captured, transcribed, and cleaned up entirely on your Mac. Nothing is sent anywhere.
+- Audio is captured, transcribed, and cleaned up entirely on your Mac. Nothing is sent anywhere unless you turn on Vault Capture (below).
 - Release builds never write your dictated words to any log file.
 - The optional update check (off by default, Settings > Startup) asks GitHub once a day for the latest release version and sends no dictation data.
+- Optional Vault Capture (off unless you enter a URL in Settings > Vault Capture) sends dictations that start with "note to self" to that server, and nothing else. See [Vault Capture](#vault-capture).
 - History (text + optional audio) lives in `~/Library/Application Support/Murmur/`, on your disk only, with automatic retention pruning.
 
 ## How it works
@@ -25,6 +26,15 @@ Four-stage local pipeline, each stage on the right piece of Apple Silicon:
 4. **Inject**: pasteboard-then-paste (`CGEvent` ⌘V) drops the text at the cursor.
 
 Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GPU, both stay resident with no contention even on a 24 GB machine.
+
+## Vault Capture
+
+Vault Capture is an opt-in way to send spoken notes to a server you run instead of pasting them. It was built for a personal notes backend, but any server that implements the contract below works.
+
+- **Off by default.** It does nothing until you enter a URL in Settings > Vault Capture. Clear the field to turn it off.
+- **What is sent.** Only dictations whose raw transcript starts with "note to self" (case-insensitive, followed by a space, comma, colon, or period, with some text after it; a bare "note to self" is pasted like any other dictation). The prefix is stripped and the rest of the text (after cleanup, if cleanup is on) is sent. Every other dictation is pasted as usual and never leaves the Mac. Audio is never sent.
+- **Contract.** `POST {your URL}/capture` with `Content-Type: application/json` and body `{"text": "..."}`. Any 2xx response counts as success. Anything else, or a network error or a 10 second timeout, falls back to pasting the transcript (prefixed with `note to self: `) so nothing is lost.
+- **Transport.** The URL must be `https`. Plain `http` is accepted only for `localhost`, a Tailscale `*.ts.net` name, or a Tailscale `100.64.0.0/10` address, where the link is already private.
 
 ## Models: nothing bundled
 
