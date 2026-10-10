@@ -54,6 +54,10 @@ targets:
         # (no frameworks to library-validate, no AppleEvents, no JIT).
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: Sources/Murmur.entitlements
+        # One binary in Debug too: Xcode's split Murmur.debug.dylib stays
+        # ad-hoc when build.sh re-signs the app, and hardened runtime's
+        # library validation then refuses to load it. Only previews use it.
+        ENABLE_DEBUG_DYLIB: NO
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
