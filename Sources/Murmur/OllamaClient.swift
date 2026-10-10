@@ -55,12 +55,14 @@ struct OllamaClient {
         case unreachable(underlying: String)
         case badStatus(Int, body: String)
         case emptyResponse
+        case notAReformat
 
         var errorDescription: String? {
             switch self {
             case .unreachable(let underlying): return "Ollama unreachable: \(underlying)"
             case .badStatus(let code, let body): return "Ollama HTTP \(code): \(body.prefix(200))"
             case .emptyResponse: return "Ollama returned an empty message"
+            case .notAReformat: return "Cleanup rewrote the dictation instead of formatting it; kept the original"
             }
         }
     }
@@ -77,6 +79,10 @@ struct OllamaClient {
         let messages: [ChatMessage]
         let stream: Bool
         let keep_alive: String
+        /// Always false: thinking models (qwen3, Qwen 3.5+) otherwise spend
+        /// ~150-225 reasoning tokens per cleanup, about 15x the latency of
+        /// the reformat itself. Non-thinking models accept and ignore it.
+        let think = false
         let options: Options
 
         struct Options: Encodable {
@@ -174,8 +180,17 @@ struct OllamaClient {
             throw OllamaError.badStatus(http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
         }
         let decoded = try JSONDecoder().decode(ChatResponse.self, from: data)
-        let cleaned = decoded.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Older Ollama servers inline a thinking model's reasoning as a
+        // <think>…</think> prefix instead of a separate field.
+        let cleaned = decoded.message.content
+            .replacingOccurrences(of: "(?s)<think>.*?</think>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw OllamaError.emptyResponse }
+        // The prompt alone is the only thing stopping a small model from
+        // answering a dictated question; check the output still is the input.
+        guard TranscriptGuard.isReformat(of: rawTranscript, cleaned) else {
+            throw OllamaError.notAReformat
+        }
         return cleaned
     }
 

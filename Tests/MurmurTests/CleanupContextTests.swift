@@ -32,7 +32,8 @@ final class CleanupContextTests: XCTestCase {
 
     /// Raw, pre-cap content (max recent budget + a full 25-term glossary
     /// line) comfortably exceeds totalCharBudget, so build(from:) must
-    /// truncate the joined result down to exactly the budget.
+    /// truncate the joined result down to exactly the budget, cutting the
+    /// body and keeping the do-not-answer guard line whole at the end.
     func testTotalCharBudgetTruncatesOutput() {
         var texts: [String] = []
         for i in 0..<10 {
@@ -44,6 +45,7 @@ final class CleanupContextTests: XCTestCase {
             return XCTFail("expected a non-nil context")
         }
         XCTAssertEqual(result.count, CleanupContext.totalCharBudget)
+        XCTAssertTrue(result.hasSuffix("\n" + CleanupContext.guardLine))
     }
 
     // MARK: - recentSnippets: char budget + per-snippet cap
