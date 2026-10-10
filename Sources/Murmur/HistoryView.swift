@@ -217,28 +217,30 @@ private struct TranscriptRow: View {
     private func reclean() {
         recleaning = true
         let raw = entry.rawTranscript
-        // Same tone + (Full-mode) history context a live dictation would use,
-        // so Re-clean can't silently disagree with Settings.
-        let tone = AppSettings.tonePreset
-        let context = CleanupContext.currentContext()
-        Task {
-            let client = OllamaClient()
-            let model = await client.resolveModel()
-            do {
-                let cleaned = try await client.clean(raw, model: model, context: context, tone: tone)
-                entry.cleanedText = cleaned
-                entry.modelName = model
+        // The same cleanup a live dictation runs (tone, Full-mode context,
+        // notAReformat handling), so Re-clean can't disagree with Settings.
+        // ponytail: Re-clean is an explicit ask, so it runs the model even
+        // with cleanup Off (Off would just hand back the raw text).
+        let mode = AppSettings.cleanupMode == .off ? CleanupMode.light : AppSettings.cleanupMode
+        Task { @MainActor in
+            let result = await DictationPipeline.live(mode: mode, brainstemURL: "").cleanup(raw)
+            if result.status == .done {
+                entry.cleanedText = result.text
+                entry.modelName = result.model
                 entry.status = .done
                 // Transcript content is DEBUG-only.
                 #if DEBUG
-                Log.log("history re-clean OK (\(model)): \"\(cleaned)\"")
+                Log.log("history re-clean OK (\(result.model)): \"\(result.text)\"")
                 #else
-                Log.log("history re-clean OK (\(model)): \(cleaned.count) chars")
+                Log.log("history re-clean OK (\(result.model)): \(result.text.count) chars")
                 #endif
-            } catch {
-                // Leave the entry's existing status/text alone — a failed
+            } else {
+                // Leave the entry's existing status/text alone: a failed
                 // re-clean shouldn't mark previously-good output as failed.
-                Log.log("history re-clean FAILED: \(error.localizedDescription)")
+                Log.log("history re-clean FAILED, entry left unchanged")
+                if result.unavailable {
+                    AppStatus.shared.report("Re-clean failed: text cleanup unavailable (Ollama).")
+                }
             }
             HistoryStore.shared?.save()
             recleaning = false

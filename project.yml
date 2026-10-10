@@ -85,6 +85,7 @@ targets:
       - path: Sources/Murmur/OllamaClient.swift
       - path: Sources/Murmur/HistoryStore.swift
       - path: Sources/Murmur/BrainstemClient.swift
+      - path: Sources/Murmur/DictationPipeline.swift
       - path: Sources/Murmur/AudioRecorder.swift
       - path: Sources/Murmur/AudioInputDevice.swift
       - path: Sources/Murmur/TextInjector.swift
