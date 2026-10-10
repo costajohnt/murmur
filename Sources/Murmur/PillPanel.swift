@@ -47,13 +47,16 @@ enum PillPhase {
     case captured
 }
 
+@MainActor
 final class PillState: ObservableObject {
     /// Number of bars in the listening-state level meter.
     static let historyLength = 7
 
     @Published var phase: PillPhase = .idle
     /// Live mic level 0..1 (dB-mapped, smoothed in AudioRecorder).
-    @Published var audioLevel: Float = 0
+    /// Not @Published: only the DEBUG meter test reads it, and publishing
+    /// it re-rendered observers ~30 times a second for nothing.
+    var audioLevel: Float = 0
     /// Rolling window of recent levels — the listening histogram, newest last.
     @Published var levelHistory: [Float] = Array(repeating: 0, count: PillState.historyLength)
 

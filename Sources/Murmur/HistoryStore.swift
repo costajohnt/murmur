@@ -66,7 +66,7 @@ final class Dictation {
 /// a new versioned schema and migrate to it, otherwise V1 stops matching the
 /// on-disk data and the store can be dropped.
 enum DictationSchemaV1: VersionedSchema {
-    static var versionIdentifier = Schema.Version(1, 0, 0)
+    static let versionIdentifier = Schema.Version(1, 0, 0)
 
     static var models: [any PersistentModel.Type] {
         [Dictation.self]

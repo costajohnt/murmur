@@ -7,6 +7,7 @@ import AppKit
 /// we subscribe to `didActivateApplicationNotification` and remember the last
 /// activated app that isn't us. The dictation pipeline snapshots this at
 /// record-start and injects into it explicitly.
+@MainActor
 final class TargetAppTracker {
     static let shared = TargetAppTracker()
 
@@ -29,7 +30,8 @@ final class TargetAppTracker {
                 return
             }
             if app.bundleIdentifier == Bundle.main.bundleIdentifier { return }
-            self?.lastActiveApp = app
+            // queue: .main above, so this closure already runs on the main actor.
+            MainActor.assumeIsolated { self?.lastActiveApp = app }
         }
     }
 }
