@@ -24,6 +24,7 @@ struct OnboardingView: View {
     @State private var accessibilityTrusted = AXIsProcessTrusted()
     /// Installed model count; nil = Ollama not reachable.
     @State private var ollamaModelCount: Int?
+    @ObservedObject private var pillState = DictationCoordinator.shared.pillState
 
     /// Poll every second so grants made outside the app (Accessibility toggled
     /// in System Settings, mic granted from the OS prompt) reflect live.
@@ -59,6 +60,16 @@ struct OnboardingView: View {
                     actionTitle: "Open System Settings",
                     actionEnabled: !accessibilityTrusted,
                     action: openAccessibilitySettings
+                )
+                PermissionRow(
+                    title: "Speech model",
+                    detail: speechModelDetail,
+                    granted: pillState.asrModel == .ready,
+                    grantedLabel: "Ready",
+                    neededLabel: speechModelBadge,
+                    actionTitle: "Retry",
+                    actionEnabled: speechModelRetryable,
+                    action: { DictationCoordinator.shared.preloadAsr() }
                 )
                 // Informational only: cleanup is optional and off by default.
                 PermissionRow(
@@ -100,6 +111,31 @@ struct OnboardingView: View {
         }
         .onAppear(perform: refreshStatuses)
         .task { await refreshOllama() }
+    }
+
+    private var speechModelBadge: String {
+        switch pillState.asrModel {
+        case .downloading(let fraction?): return "Downloading \(Int(fraction * 100))%"
+        case .downloading(nil): return "Downloading"
+        case .loading: return "Loading"
+        case .failed: return "Failed"
+        case .notLoaded, .ready: return "Not loaded"
+        }
+    }
+
+    private var speechModelDetail: String {
+        switch pillState.asrModel {
+        case .ready: return "Parakeet is loaded and runs entirely on this Mac."
+        case .failed(let message): return "Couldn't load the speech model: \(message)"
+        default: return "The first run downloads the speech model (a few hundred MB). You can record meanwhile; transcription waits for it."
+        }
+    }
+
+    private var speechModelRetryable: Bool {
+        switch pillState.asrModel {
+        case .failed, .notLoaded: return true
+        default: return false
+        }
     }
 
     private var ollamaDetail: String {
