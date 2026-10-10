@@ -15,9 +15,13 @@
 # The cert is untrusted on purpose: codesign signs with it anyway, and trusting
 # it would need an admin prompt for no gain.
 set -euo pipefail
+# System tools only: earlier CI steps can prepend shims via $GITHUB_PATH, and
+# security/openssl/base64/codesign all see the key or its password.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
 APP="${1:?usage: sign-release.sh path/to/Murmur.app}"
 IDENTITY="Murmur Release Signing"
+ENTITLEMENTS="$(cd "$(dirname "$0")/.." && pwd)/Sources/Murmur.entitlements"
 : "${MURMUR_SIGNING_P12:?MURMUR_SIGNING_P12 (base64 .p12) is not set}"
 : "${MURMUR_SIGNING_P12_PASSWORD:?MURMUR_SIGNING_P12_PASSWORD is not set}"
 
@@ -57,7 +61,10 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: \
 echo "==> Signing $APP"
 # ponytail: no --deep, the bundle has no nested frameworks or helpers. Add it
 # (or sign the nested code first) if Contents/Frameworks ever appears.
-codesign --force --keychain "$keychain" --sign "$IDENTITY" "$APP"
+# Hardened runtime (--options runtime) keeps other processes from injecting
+# code that would inherit the Microphone/Accessibility grants.
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" \
+  --keychain "$keychain" --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
 
 req="$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => //p')"
@@ -65,4 +72,9 @@ echo "designated => $req"
 case "$req" in
   *"certificate leaf"*) ;;
   *) echo "error: $APP is not signed with $IDENTITY" >&2; exit 1 ;;
+esac
+details="$(codesign -dv "$APP" 2>&1)"
+case "$details" in
+  *"(runtime)"*) echo "hardened runtime: on" ;;
+  *) echo "error: $APP is not signed with hardened runtime" >&2; exit 1 ;;
 esac

@@ -83,6 +83,12 @@ scripts/build.sh   # xcodegen generate + xcodebuild (Debug)
 scripts/run.sh     # launch the built Murmur.app
 ```
 
+Ad-hoc builds change identity on every rebuild, so macOS asks for
+Microphone and Accessibility again each time. Run
+`scripts/create-signing-cert.sh` once: it makes a local self-signed
+"Murmur Dev Signing" cert (no Keychain Access steps), and `build.sh` signs
+with it from then on so the grants stick.
+
 ### Permissions
 
 - **Microphone**: prompted on first recording.

@@ -1,5 +1,37 @@
 import XCTest
 
+final class TranscriptGuardReformatTests: XCTestCase {
+    func testAcceptsFormattingFixes() {
+        XCTAssertTrue(TranscriptGuard.isReformat(
+            of: "uh so I think we should ship the release tomorrow morning",
+            "So I think we should ship the release tomorrow morning."))
+        XCTAssertTrue(TranscriptGuard.isReformat(
+            of: "um what is the capital of france",
+            "What is the capital of France?"))
+    }
+
+    func testRejectsAnAnswer() {
+        XCTAssertFalse(TranscriptGuard.isReformat(of: "um what is the capital of france", "Paris."))
+    }
+
+    func testRejectsALongAnswerOrRewrite() {
+        XCTAssertFalse(TranscriptGuard.isReformat(
+            of: "write me a haiku about autumn",
+            "Crimson leaves drifting, cool wind whispers through bare trees, autumn settles in."))
+    }
+
+    func testRejectsAnOutputThatBalloons() {
+        XCTAssertFalse(TranscriptGuard.isReformat(
+            of: "list the steps",
+            "List the steps. Step one list the steps. Step two list the steps again."))
+    }
+
+    func testSkipsVeryShortDictations() {
+        // Number formatting legitimately replaces every word.
+        XCTAssertTrue(TranscriptGuard.isReformat(of: "twenty five", "25"))
+    }
+}
+
 /// Mirrors scripts/test-guard.swift's discard/keep boundary, wired into
 /// XCTest so it runs via `xcodebuild test` instead of a standalone harness.
 final class TranscriptGuardTests: XCTestCase {

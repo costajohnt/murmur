@@ -355,6 +355,11 @@ final class DictationCoordinator {
             Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): %d chars", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned.count))
             #endif
             return (cleaned, .done, model)
+        } catch OllamaClient.OllamaError.notAReformat {
+            // Ollama works; the model answered or rewrote instead of
+            // formatting. The raw transcript is the right text, so no banner.
+            Log.log("pipeline cleanup REJECTED (output was not a reformat of the input), injecting raw transcript")
+            return (text, .cleanupFailed, model)
         } catch {
             AppStatus.shared.report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
             Log.log("pipeline cleanup FAILED (injecting raw transcript): \(error.localizedDescription)")

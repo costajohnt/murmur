@@ -8,7 +8,9 @@ options:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    exactVersion: 0.15.4
+    # 0.15.4, pinned by commit: a tag can be moved, and this code ships
+    # inside the signed app. Package.resolved is gitignored.
+    revision: b9d43724cbdb5a980e441fd54180964e94d470f7
 
 targets:
   Murmur:
@@ -46,7 +48,16 @@ targets:
         # DEVELOPMENT_TEAM / CODE_SIGN_IDENTITY env vars for real-cert builds.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
-        ENABLE_HARDENED_RUNTIME: NO
+        # Hardened runtime blocks DYLD_INSERT_LIBRARIES and unsigned dylibs,
+        # which would otherwise inherit Murmur's Microphone and Accessibility
+        # grants. The microphone then needs its entitlement; nothing else does
+        # (no frameworks to library-validate, no AppleEvents, no JIT).
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Sources/Murmur.entitlements
+        # One binary in Debug too: Xcode's split Murmur.debug.dylib stays
+        # ad-hoc when build.sh re-signs the app, and hardened runtime's
+        # library validation then refuses to load it. Only previews use it.
+        ENABLE_DEBUG_DYLIB: NO
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
