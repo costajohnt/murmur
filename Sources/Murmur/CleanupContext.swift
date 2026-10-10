@@ -3,7 +3,7 @@ import Foundation
 /// Builds the automatic personalization context for the Ollama cleanup stage.
 /// No manual dictionary and no configuration: the
 /// context is derived entirely from recent successful history entries —
-/// recent cleaned transcripts (vocabulary + style) and an auto-mined glossary
+/// recent raw transcripts (vocabulary + style) and an auto-mined glossary
 /// of distinctive terms (capitalized-mid-sentence words, acronyms, camelCase
 /// tech tokens). Returns nil when history is empty so the cold-start path is
 /// byte-identical to no-context behavior.
@@ -27,8 +27,8 @@ enum CleanupContext {
         "AM", "PM",
     ]
 
-    /// `texts`: cleaned transcripts, newest first (up to `glossarySourceLimit`).
-    /// Returns the full context block to inject as a system message, or nil
+    /// `texts`: raw transcripts, newest first (up to `glossarySourceLimit`).
+    /// Returns the context block `OllamaClient.clean` fences into the user turn, or nil
     /// when there is nothing useful to add.
     static func build(from texts: [String]) -> String? {
         let usable = texts.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -135,7 +135,7 @@ enum CleanupContext {
     @MainActor
     static func currentContext() -> String? {
         guard AppSettings.cleanupMode == .full else { return nil }
-        let recentTexts = HistoryStore.shared?.recentCleanedTexts(limit: glossarySourceLimit) ?? []
+        let recentTexts = HistoryStore.shared?.recentRawTranscripts(limit: glossarySourceLimit) ?? []
         return build(from: recentTexts)
     }
 

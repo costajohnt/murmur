@@ -304,24 +304,25 @@ final class HistoryStore {
         return (try? context.fetch(descriptor))?.first
     }
 
-    /// Last `limit` successful cleaned texts, newest first — the context
-    /// source for context-aware cleanup.
-    func recentCleanedTexts(limit: Int) -> [String] {
-        Self.recentCleanedTexts(in: context, limit: limit)
+    /// Last `limit` successful raw (ASR) transcripts, newest first — the
+    /// context source for context-aware cleanup. Raw, not cleaned: LLM output
+    /// fed back as context lets one bad cleanup steer the next ones.
+    func recentRawTranscripts(limit: Int) -> [String] {
+        Self.recentRawTranscripts(in: context, limit: limit)
     }
 
     /// Static core so the fetch is testable against an in-memory container.
-    static func recentCleanedTexts(in context: ModelContext, limit: Int) -> [String] {
+    static func recentRawTranscripts(in context: ModelContext, limit: Int) -> [String] {
         let doneRaw = DictationStatus.done.rawValue
         var descriptor = FetchDescriptor<Dictation>(
             // Use `!= ""` not `!.isEmpty`: on Xcode 26.4, `.isEmpty` inside a
             // SwiftData #Predicate silently doesn't filter (empty cleanedText
             // leaks through). Caught by MurmurTests.
-            predicate: #Predicate { $0.statusRaw == doneRaw && $0.cleanedText != "" },
+            predicate: #Predicate { $0.statusRaw == doneRaw && $0.rawTranscript != "" },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = limit
-        return ((try? context.fetch(descriptor)) ?? []).map(\.cleanedText)
+        return ((try? context.fetch(descriptor)) ?? []).map(\.rawTranscript)
     }
 
     /// Deletes an entry and its backing WAV (if any).

@@ -13,7 +13,7 @@ final class HistoryStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testRecentCleanedTextsReturnsOnlyDoneEntriesNewestFirst() throws {
+    func testRecentRawTranscriptsReturnsOnlyDoneRawNewestFirst() throws {
         let ctx = try makeInMemoryContext()
 
         let seeds: [(String, DictationStatus, Date)] = [
@@ -25,8 +25,8 @@ final class HistoryStoreTests: XCTestCase {
         for (text, status, date) in seeds {
             let entry = Dictation(
                 createdAt: date,
-                rawTranscript: text.lowercased(),
-                cleanedText: status == .done ? text : "",
+                rawTranscript: text,
+                cleanedText: status == .done ? text.uppercased() : "",
                 modelName: "test",
                 status: status
             )
@@ -34,7 +34,7 @@ final class HistoryStoreTests: XCTestCase {
         }
         try ctx.save()
 
-        let fetched = HistoryStore.recentCleanedTexts(in: ctx, limit: 50)
+        let fetched = HistoryStore.recentRawTranscripts(in: ctx, limit: 50)
         XCTAssertEqual(fetched, [
             "Ping the Proxmox box before the backup runs.",
             "The SwiftData store keeps the ASR history on macOS.",
@@ -43,7 +43,7 @@ final class HistoryStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testRecentCleanedTextsRespectsLimit() throws {
+    func testRecentRawTranscriptsRespectsLimit() throws {
         let ctx = try makeInMemoryContext()
         for i in 0..<5 {
             let entry = Dictation(
@@ -57,15 +57,15 @@ final class HistoryStoreTests: XCTestCase {
         }
         try ctx.save()
 
-        let fetched = HistoryStore.recentCleanedTexts(in: ctx, limit: 2)
-        XCTAssertEqual(fetched, ["cleaned 0", "cleaned 1"])
+        let fetched = HistoryStore.recentRawTranscripts(in: ctx, limit: 2)
+        XCTAssertEqual(fetched, ["raw 0", "raw 1"])
     }
 
     // NOTE: a test asserting the doc comment's "excludes empty cleanedText"
     // clause (predicate: `!$0.cleanedText.isEmpty`) was attempted here and
     // removed. On this toolchain (Xcode 26.4 / macOS 26.4 SDK) that clause
     // does not filter: a `.done` entry with `cleanedText == ""` IS returned
-    // by `recentCleanedTexts`, verified both against this in-memory
+    // by `recentRawTranscripts`, verified both against this in-memory
     // ModelContainer and an on-disk one. `$0.cleanedText != ""` and
     // `$0.cleanedText.count > 0` both filter correctly in the same
     // predicate; only `.isEmpty` misbehaves. This looks like a SwiftData
@@ -75,8 +75,16 @@ final class HistoryStoreTests: XCTestCase {
     // non-beta toolchain.
 
     @MainActor
-    func testRecentCleanedTextsOnEmptyStoreReturnsEmpty() throws {
+    func testRecentRawTranscriptsSkipsEmptyRaw() throws {
         let ctx = try makeInMemoryContext()
-        XCTAssertTrue(HistoryStore.recentCleanedTexts(in: ctx, limit: 50).isEmpty)
+        ctx.insert(Dictation(createdAt: Date(), rawTranscript: "", cleanedText: "Hallucinated.", modelName: "test", status: .done))
+        try ctx.save()
+        XCTAssertTrue(HistoryStore.recentRawTranscripts(in: ctx, limit: 50).isEmpty)
+    }
+
+    @MainActor
+    func testRecentRawTranscriptsOnEmptyStoreReturnsEmpty() throws {
+        let ctx = try makeInMemoryContext()
+        XCTAssertTrue(HistoryStore.recentRawTranscripts(in: ctx, limit: 50).isEmpty)
     }
 }
