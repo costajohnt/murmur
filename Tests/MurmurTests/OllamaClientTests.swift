@@ -275,4 +275,95 @@ final class OllamaClientTests: StubbedNetworkTestCase {
                 c.expected, line: c.line)
         }
     }
+
+    // MARK: - pull
+
+    func testParsePullLine() throws {
+        XCTAssertNil(try OllamaClient.parsePullLine(""))
+        XCTAssertNil(try OllamaClient.parsePullLine("   "))
+        XCTAssertEqual(try OllamaClient.parsePullLine(#"{"status":"pulling manifest"}"#),
+                       .init(status: "pulling manifest", fraction: nil))
+        let downloading = try XCTUnwrap(OllamaClient.parsePullLine(
+            #"{"status":"pulling dde5aa3fc5ff","digest":"sha256:dde5","total":2000,"completed":500}"#))
+        XCTAssertEqual(downloading.status, "pulling dde5aa3fc5ff")
+        XCTAssertEqual(try XCTUnwrap(downloading.fraction), 0.25, accuracy: 1e-9)
+        // Total without completed yet = 0%, not nil.
+        XCTAssertEqual(try OllamaClient.parsePullLine(#"{"status":"pulling x","total":10}"#)?.fraction, 0)
+        let success = try XCTUnwrap(OllamaClient.parsePullLine(#"{"status":"success"}"#))
+        XCTAssertTrue(success.isSuccess)
+    }
+
+    func testParsePullLineThrowsOnErrorAndGarbage() {
+        for line in [#"{"error":"pull model manifest: file does not exist"}"#, "not json", #"{"digest":"x"}"#] {
+            XCTAssertThrowsError(try OllamaClient.parsePullLine(line), line) { error in
+                guard case OllamaClient.OllamaError.pullFailed = error else {
+                    return XCTFail("expected pullFailed, got \(error)")
+                }
+            }
+        }
+    }
+
+    private func stubPull(status: Int = 200, lines: [String]) {
+        StubURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (response, Data((lines.joined(separator: "\n") + "\n").utf8))
+        }
+    }
+
+    func testPullStreamsProgressUntilSuccess() async throws {
+        stubPull(lines: [
+            #"{"status":"pulling manifest"}"#,
+            #"{"status":"pulling abc","digest":"sha256:abc","total":4,"completed":1}"#,
+            #"{"status":"pulling abc","digest":"sha256:abc","total":4,"completed":4}"#,
+            #"{"status":"verifying sha256 digest"}"#,
+            #"{"status":"success"}"#,
+        ])
+        var seen: [OllamaClient.PullProgress] = []
+        try await OllamaClient(session: stubbedURLSession()).pull(model: "llama3.2:3b") { seen.append($0) }
+
+        XCTAssertEqual(seen.map(\.status), ["pulling manifest", "pulling abc", "pulling abc", "verifying sha256 digest", "success"])
+        XCTAssertEqual(seen.map(\.fraction), [nil, 0.25, 1, nil, nil])
+        let request = try XCTUnwrap(StubURLProtocol.requests.last)
+        XCTAssertEqual(request.url?.absoluteString, "http://localhost:11434/api/pull")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBodyData)) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "llama3.2:3b")
+        XCTAssertEqual(body["stream"] as? Bool, true)
+    }
+
+    func testPullThrowsOnErrorLine() async {
+        stubPull(lines: [#"{"status":"pulling manifest"}"#, #"{"error":"file does not exist"}"#])
+        do {
+            try await OllamaClient(session: stubbedURLSession()).pull(model: "nope") { _ in }
+            XCTFail("expected throw")
+        } catch OllamaClient.OllamaError.pullFailed(let message) {
+            XCTAssertEqual(message, "file does not exist")
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+    }
+
+    func testPullThrowsWhenStreamEndsWithoutSuccess() async {
+        stubPull(lines: [#"{"status":"pulling manifest"}"#])
+        do {
+            try await OllamaClient(session: stubbedURLSession()).pull(model: "x") { _ in }
+            XCTFail("expected throw")
+        } catch OllamaClient.OllamaError.pullFailed {
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+    }
+
+    func testPullThrowsBadStatusOnNon200() async {
+        stubPull(status: 500, lines: [#"{"error":"boom"}"#])
+        do {
+            try await OllamaClient(session: stubbedURLSession()).pull(model: "x") { _ in }
+            XCTFail("expected throw")
+        } catch OllamaClient.OllamaError.badStatus(let code, let body) {
+            XCTAssertEqual(code, 500)
+            XCTAssertTrue(body.contains("boom"))
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+    }
 }
