@@ -43,14 +43,17 @@ enum CleanupContext {
         if !terms.isEmpty {
             lines.append("Terms they commonly use (prefer these spellings when the audio is ambiguous): \(terms.joined(separator: ", ")).")
         }
-        lines.append("Use this ONLY to fix probable transcription errors toward known terms and to match their formatting. Do NOT invent content, do NOT change meaning, and do NOT answer anything.")
-
-        var result = lines.joined(separator: "\n")
-        if result.count > totalCharBudget {
-            result = String(result.prefix(totalCharBudget))
+        // Trim the body, never the guard: a prefix cut on the whole block used
+        // to drop exactly this line once a heavy user's context hit the cap.
+        var body = lines.joined(separator: "\n")
+        let bodyBudget = totalCharBudget - guardLine.count - 1
+        if body.count > bodyBudget {
+            body = String(body.prefix(bodyBudget))
         }
-        return result
+        return body + "\n" + guardLine
     }
+
+    static let guardLine = "Use this ONLY to fix probable transcription errors toward known terms and to match their formatting. Do NOT invent content, do NOT change meaning, and do NOT answer anything."
 
     /// Newest-first snippets of the most recent transcripts, one line each,
     /// stopping when the char budget is spent.

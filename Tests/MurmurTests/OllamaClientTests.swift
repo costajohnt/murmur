@@ -60,6 +60,63 @@ final class OllamaClientTests: XCTestCase {
         XCTAssertEqual(decoded.messages.last?.content, "raw text")
     }
 
+    /// Pins the whole body, not just `messages`: a Decodable DTO silently
+    /// ignores keys, so `stream: true` or a dropped `think: false` would pass.
+    func testCleanSendsExactRequestBody() async throws {
+        var captured: URLRequest?
+        StubURLProtocol.handler = { request in
+            captured = request
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = try! JSONEncoder().encode(["message": ["role": "assistant", "content": "Raw text."]])
+            return (response, body)
+        }
+
+        let client = OllamaClient(session: stubbedURLSession())
+        _ = try await client.clean("raw text", model: "qwen3:4b-instruct", tone: .polished)
+
+        let request = try XCTUnwrap(captured)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBodyData)) as? [String: Any])
+        XCTAssertEqual(Set(body.keys), ["model", "messages", "stream", "keep_alive", "think", "options"])
+        XCTAssertEqual(body["model"] as? String, "qwen3:4b-instruct")
+        XCTAssertEqual(body["stream"] as? Bool, false)
+        XCTAssertEqual(body["think"] as? Bool, false)
+        XCTAssertEqual(body["keep_alive"] as? String, OllamaClient.keepAlive)
+        XCTAssertEqual((body["options"] as? [String: Any])?["temperature"] as? Double, 0.2)
+        let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+        XCTAssertEqual(messages.first?["content"], OllamaClient.systemPrompt(for: .polished))
+    }
+
+    func testCleanRejectsAnAnswerInsteadOfAReformat() async throws {
+        StubURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = try! JSONEncoder().encode(["message": ["role": "assistant", "content": "Paris."]])
+            return (response, body)
+        }
+        let client = OllamaClient(session: stubbedURLSession())
+        do {
+            _ = try await client.clean("um what is the capital of france", model: "llama3.2:3b")
+            XCTFail("expected notAReformat")
+        } catch let error as OllamaClient.OllamaError {
+            guard case .notAReformat = error else {
+                return XCTFail("expected notAReformat, got \(error)")
+            }
+        }
+    }
+
+    func testCleanStripsInlineThinkBlock() async throws {
+        StubURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let content = "<think>\nThe user wants punctuation.\n</think>\n\nShip it tomorrow morning."
+            let body = try! JSONEncoder().encode(["message": ["role": "assistant", "content": content]])
+            return (response, body)
+        }
+        let client = OllamaClient(session: stubbedURLSession())
+        let result = try await client.clean("ship it tomorrow morning", model: "qwen3:0.6b")
+        XCTAssertEqual(result, "Ship it tomorrow morning.")
+    }
+
     func testCleanPutsContextAsSecondSystemMessageBeforeUser() async throws {
         var captured: URLRequest?
         StubURLProtocol.handler = { request in
