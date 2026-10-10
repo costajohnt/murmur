@@ -64,6 +64,11 @@ targets:
         # Lets Swift call MurmurCatchNSException — the ObjC @try/@catch bridge
         # that keeps an installTap NSException from aborting the process.
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Murmur-Bridging-Header.h
+      configs:
+        # fixture.wav feeds the DEBUG-only pipelineFixture hook; keep it out
+        # of the shipped app.
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: fixture.wav
 
   # Unit tests for pure logic (audit item A6). No host application: the
   # SwiftUI App entry point makes @testable-importing the Murmur executable

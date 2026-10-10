@@ -83,12 +83,12 @@ final class BrainstemClientTests: XCTestCase {
             return (response, Data())
         }
 
-        let client = BrainstemClient(baseURL: "http://brainstem.example/", session: stubbedURLSession())
+        let client = BrainstemClient(baseURL: "https://brainstem.example/", session: stubbedURLSession())
         try await client.capture("buy milk")
 
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.url?.absoluteString, "http://brainstem.example/capture")
+        XCTAssertEqual(request.url?.absoluteString, "https://brainstem.example/capture")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(request.timeoutInterval, 10)
 
@@ -104,9 +104,9 @@ final class BrainstemClientTests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!
             return (response, Data())
         }
-        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
+        let client = BrainstemClient(baseURL: "https://brainstem.example", session: stubbedURLSession())
         try await client.capture("no trailing slash on base")
-        XCTAssertEqual(capturedURL?.absoluteString, "http://brainstem.example/capture")
+        XCTAssertEqual(capturedURL?.absoluteString, "https://brainstem.example/capture")
     }
 
     func test2xxStatusesSucceed() async throws {
@@ -115,7 +115,7 @@ final class BrainstemClientTests: XCTestCase {
                 let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: nil)!
                 return (response, Data())
             }
-            let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
+            let client = BrainstemClient(baseURL: "https://brainstem.example", session: stubbedURLSession())
             do {
                 try await client.capture("text")
             } catch {
@@ -129,7 +129,7 @@ final class BrainstemClientTests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 413, httpVersion: nil, headerFields: nil)!
             return (response, Data("too large".utf8))
         }
-        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
+        let client = BrainstemClient(baseURL: "https://brainstem.example", session: stubbedURLSession())
         do {
             try await client.capture("oversized text")
             XCTFail("expected an error for a 413 response")
@@ -142,12 +142,43 @@ final class BrainstemClientTests: XCTestCase {
         StubURLProtocol.handler = { _ in
             throw URLError(.notConnectedToInternet)
         }
-        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
+        let client = BrainstemClient(baseURL: "https://brainstem.example", session: stubbedURLSession())
         do {
             try await client.capture("text")
             XCTFail("expected an error when the network request fails")
         } catch {
             // expected
+        }
+    }
+
+    // MARK: - URL scheme policy
+
+    func testSchemePolicy() {
+        XCTAssertTrue(BrainstemClient.isAllowed(scheme: "https", host: "example.com"))
+        XCTAssertTrue(BrainstemClient.isAllowed(scheme: "http", host: "brainstem.tail1234.ts.net"))
+        XCTAssertTrue(BrainstemClient.isAllowed(scheme: "http", host: "100.64.0.1"))
+        XCTAssertTrue(BrainstemClient.isAllowed(scheme: "http", host: "100.127.255.255"))
+        XCTAssertTrue(BrainstemClient.isAllowed(scheme: "http", host: "localhost"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "100.128.0.1"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "192.168.5.10"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "brainstem.example"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "evil-ts.net"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "ftp", host: "localhost"))
+    }
+
+    func testPlainHTTPToPublicHostIsRefusedBeforeSending() async {
+        StubURLProtocol.handler = { _ in
+            XCTFail("must not send")
+            throw URLError(.cancelled)
+        }
+        let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
+        do {
+            try await client.capture("text")
+            XCTFail("expected insecureURL")
+        } catch BrainstemClient.CaptureError.insecureURL {
+            // expected
+        } catch {
+            XCTFail("unexpected error \(error)")
         }
     }
 }

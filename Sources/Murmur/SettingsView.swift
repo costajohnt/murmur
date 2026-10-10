@@ -226,7 +226,7 @@ struct SettingsView: View {
 
     private var vaultCaptureSection: some View {
         Section("Vault Capture") {
-            TextField("Brainstem URL", text: $brainstemURL, prompt: Text("http://brainstem.example.ts.net"))
+            TextField("Brainstem URL", text: $brainstemURL, prompt: Text("https://brainstem.example.ts.net"))
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
             Text(brainstemURL.isEmpty

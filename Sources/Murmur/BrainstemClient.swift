@@ -14,12 +14,15 @@ struct BrainstemClient {
 
     enum CaptureError: LocalizedError {
         case invalidURL(String)
+        case insecureURL(String)
         case invalidResponse
         case badStatus(Int, body: String)
 
         var errorDescription: String? {
             switch self {
             case .invalidURL(let base): return "Invalid brainstem URL: \(base)"
+            case .insecureURL(let base):
+                return "Brainstem URL must be https (plain http only for a Tailscale *.ts.net or 100.64.0.0/10 host, or localhost): \(base)"
             case .invalidResponse: return "Brainstem returned a non-HTTP response"
             case .badStatus(let code, let body): return "Brainstem HTTP \(code): \(body.prefix(200))"
             }
@@ -36,8 +39,11 @@ struct BrainstemClient {
     /// silently drop the transcript.
     func capture(_ text: String) async throws {
         let trimmedBase = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
-        guard let url = URL(string: trimmedBase + "/capture") else {
+        guard let url = URL(string: trimmedBase + "/capture"), let host = url.host?.lowercased() else {
             throw CaptureError.invalidURL(baseURL)
+        }
+        guard Self.isAllowed(scheme: url.scheme?.lowercased(), host: host) else {
+            throw CaptureError.insecureURL(baseURL)
         }
 
         var request = URLRequest(url: url, timeoutInterval: 10)
@@ -57,11 +63,27 @@ struct BrainstemClient {
         }
     }
 
+    /// The transcript leaves the machine here, so plain http is only allowed
+    /// where the transport is already private: Tailscale (WireGuard-encrypted
+    /// MagicDNS names and CGNAT 100.64.0.0/10 addresses) or this machine.
+    static func isAllowed(scheme: String?, host: String) -> Bool {
+        switch scheme {
+        case "https": return true
+        case "http":
+            if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".ts.net") {
+                return true
+            }
+            let octets = host.split(separator: ".").compactMap { UInt8($0) }
+            return octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
+        default: return false
+        }
+    }
+
     // MARK: - "note to self" prefix routing
 
     /// The spoken prefix that routes a dictation to the vault instead of
-    /// pasting it. Matched case-insensitively at the start of the (already
-    /// cleaned-up) transcript.
+    /// pasting it. Matched case-insensitively at the start of the raw ASR
+    /// transcript (before cleanup, so the LLM cannot reword the prefix away).
     private static let prefix = "note to self"
     private static let separators: Set<Character> = [",", ":", "."]
 
