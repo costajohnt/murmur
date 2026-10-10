@@ -24,6 +24,12 @@ struct SettingsView: View {
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
     @State private var ollamaReachable = true
+    /// The model cleanup would use right now (pickModel over the last tags fetch).
+    @State private var resolvedModel: String?
+    @State private var pullTask: Task<Void, Never>?
+    @State private var pullStatus = ""
+    @State private var pullFraction: Double?
+    @State private var pullError: String?
     @State private var inputDevices: [AudioInputDevice] = []
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
@@ -54,6 +60,7 @@ struct SettingsView: View {
         .onChange(of: hotkeyBindingRaw) { HotkeyManager.shared.apply() }
         .onChange(of: launchAtLogin) { syncLoginItem() }
         .onChange(of: checkForUpdates) { UpdateChecker.shared.checkIfDue() }
+        .onChange(of: modelOverride) { updateResolvedModel() }
     }
 
     // MARK: - Cleanup mode
@@ -73,6 +80,82 @@ struct SettingsView: View {
             Text((CleanupMode(rawValue: cleanupModeRaw) ?? .off).summary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            if !cleanupOff {
+                modelStatus
+            }
+        }
+    }
+
+    /// Which model cleanup will use, whether it's installed, and a one-click
+    /// pull when it isn't.
+    @ViewBuilder
+    private var modelStatus: some View {
+        if !ollamaReachable {
+            HStack(spacing: 4) {
+                Text("Ollama isn't running")
+                Link("(ollama.com)", destination: URL(string: "https://ollama.com")!)
+            }
+            .font(.callout)
+            .foregroundStyle(.orange)
+        } else if let model = resolvedModel, let installed = installedModels {
+            if installed.contains(model) {
+                Label("Uses \(model) (installed)", systemImage: "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if pullTask != nil {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: pullFraction)
+                    HStack {
+                        Text(pullStatus)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("Cancel") { pullTask?.cancel() }
+                            .controlSize(.small)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("\(model) isn't installed, so cleanup can't run.", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    Button("Download \(model)\(Self.downloadSizes[model].map { " (\($0))" } ?? "")") {
+                        startPull(model)
+                    }
+                    if let pullError {
+                        Text(pullError)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Approximate sizes for the two Auto models; others show no size.
+    private static let downloadSizes = ["llama3.2:3b": "~2 GB", "qwen2.5:7b": "~4.7 GB"]
+
+    @MainActor
+    private func startPull(_ model: String) {
+        pullError = nil
+        pullStatus = "Starting…"
+        pullFraction = nil
+        pullTask = Task { @MainActor in
+            do {
+                try await OllamaClient().pull(model: model) { update in
+                    pullStatus = update.status
+                    pullFraction = update.fraction
+                }
+                await refreshModels()
+            } catch is CancellationError {
+                // User cancelled; back to the Download button.
+            } catch {
+                pullError = error.localizedDescription
+                Log.log("settings: pull \(model) failed: \(error.localizedDescription)")
+            }
+            pullTask = nil
         }
     }
 
@@ -133,6 +216,18 @@ struct SettingsView: View {
             ollamaReachable = false
             Log.log("settings: model refresh failed: \(error.localizedDescription)")
         }
+        updateResolvedModel()
+    }
+
+    /// Same decision `resolveModel` makes at dictation time, over the last
+    /// tags fetch. Kept in state (not computed in body) because pickModel logs.
+    private func updateResolvedModel() {
+        resolvedModel = OllamaClient.pickModel(
+            installed: installedModels ?? [],
+            override: modelOverride.isEmpty ? nil : modelOverride,
+            preferred: OllamaClient.preferredModel,
+            fallback: OllamaClient.fallbackModel
+        )
     }
 
     // MARK: - Tone
