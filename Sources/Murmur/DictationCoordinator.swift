@@ -14,7 +14,17 @@ final class DictationCoordinator {
 
     private let recorder = AudioRecorder()
     private let ollama = OllamaClient()
-    private var asrManager: AsrManager?
+    /// In-flight or finished Parakeet load. Caching the Task (not just the
+    /// manager) stops the launch preload and an early first dictation from
+    /// both running `downloadAndLoad`, since main-actor reentrancy lets both
+    /// pass a nil check across the await.
+    private var asrLoad: Task<AsrManager, Error>?
+    /// True from a tap on an idle pill until `recorder.start()` returns. The
+    /// phase stays `.idle` for that whole window (mic prompt, Bluetooth
+    /// format settle), so without this a second tap ran a second concurrent
+    /// `start()` on the same engine and could leave the mic live behind an
+    /// idle pill.
+    private var isStarting = false
     private var targetApp: NSRunningApplication?
     private var recordStart: Date?
     /// N2: auto-opening Setup on an Accessibility-missing paste failure should
@@ -61,6 +71,12 @@ final class DictationCoordinator {
     // MARK: - Phases
 
     private func startListening() {
+        guard !isStarting else {
+            Log.log("pipeline: click ignored (recording already starting)")
+            return
+        }
+        isStarting = true
+
         // Snapshot the injection target NOW (didActivate-tracked, never a
         // stale frontmost read at paste time — v0 lesson).
         targetApp = TargetAppTracker.shared.lastActiveApp
@@ -83,6 +99,7 @@ final class DictationCoordinator {
         }
 
         Task { @MainActor in
+            defer { isStarting = false }
             do {
                 try await recorder.start()
                 recordStart = Date()
@@ -401,15 +418,24 @@ final class DictationCoordinator {
 
     /// Lazy-loads Parakeet once and keeps it resident (ANE, ~66 MB).
     func ensureAsr() async throws -> AsrManager {
-        if let asrManager { return asrManager }
-        Log.log("asr: loading Parakeet TDT v2 (first ever run downloads the model)")
-        let start = Date()
-        let models = try await AsrModels.downloadAndLoad(version: .v2)
-        let manager = AsrManager(config: .default)
-        try await manager.loadModels(models)
-        asrManager = manager
-        Log.log(String(format: "asr: models ready in %.2fs", Date().timeIntervalSince(start)))
-        return manager
+        if let asrLoad { return try await asrLoad.value }
+        let load = Task { @MainActor in
+            Log.log("asr: loading Parakeet TDT v2 (first ever run downloads the model)")
+            let start = Date()
+            let models = try await AsrModels.downloadAndLoad(version: .v2)
+            let manager = AsrManager(config: .default)
+            try await manager.loadModels(models)
+            Log.log(String(format: "asr: models ready in %.2fs", Date().timeIntervalSince(start)))
+            return manager
+        }
+        asrLoad = load
+        do {
+            return try await load.value
+        } catch {
+            // Forget the failed load so the next dictation retries.
+            asrLoad = nil
+            throw error
+        }
     }
 
     /// Warm the ASR models at launch so the first dictation isn't slow.
