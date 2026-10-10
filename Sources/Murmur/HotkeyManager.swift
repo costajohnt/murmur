@@ -8,8 +8,9 @@ import Foundation
 /// triggers a permission prompt — and neither does turning it on.
 ///
 /// When the hotkey fires it toggles dictation exactly like a pill click
-/// (`DictationCoordinator.pillTapped()`). When disabled, nothing is
-/// registered and no monitor of any kind is installed.
+/// (`DictationCoordinator.pillTapped()`), or, with push-to-talk on, records
+/// while held. When disabled, nothing is registered and no monitor of any
+/// kind is installed.
 @MainActor
 final class HotkeyManager {
     static let shared = HotkeyManager()
@@ -65,21 +66,28 @@ final class HotkeyManager {
     /// and torn down per `apply()`.
     private func installHandlerIfNeeded() {
         guard handlerRef == nil else { return }
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         InstallEventHandler(
             GetApplicationEventTarget(),
-            { _, _, _ -> OSStatus in
+            { _, event, _ -> OSStatus in
+                let pressed = event.map { GetEventKind($0) } == UInt32(kEventHotKeyPressed)
                 Task { @MainActor in
-                    Log.log("hotkey: pressed → pillTapped")
-                    DictationCoordinator.shared.pillTapped()
+                    let coordinator = DictationCoordinator.shared
+                    if AppSettings.pushToTalk {
+                        Log.log("hotkey: \(pressed ? "pressed" : "released") (push-to-talk)")
+                        if pressed { coordinator.pushToTalkPressed() } else { coordinator.pushToTalkReleased() }
+                    } else if pressed {
+                        Log.log("hotkey: pressed → pillTapped")
+                        coordinator.pillTapped()
+                    }
                 }
                 return noErr
             },
-            1,
-            &eventType,
+            eventTypes.count,
+            &eventTypes,
             nil,
             &handlerRef
         )

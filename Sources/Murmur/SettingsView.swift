@@ -18,6 +18,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.silenceAutoStopSecondsKey) private var silenceAutoStopSeconds = AppSettings.defaultSilenceAutoStopSeconds
     @AppStorage(AppSettings.brainstemURLKey) private var brainstemURL = ""
     @AppStorage(AppSettings.preferredInputDeviceUIDKey) private var inputDeviceUID = ""
+    @AppStorage(AppSettings.pushToTalkKey) private var pushToTalk = false
+    @AppStorage(AppSettings.checkForUpdatesKey) private var checkForUpdates = false
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
@@ -51,6 +53,7 @@ struct SettingsView: View {
         .onChange(of: hotkeyEnabled) { HotkeyManager.shared.apply() }
         .onChange(of: hotkeyBindingRaw) { HotkeyManager.shared.apply() }
         .onChange(of: launchAtLogin) { syncLoginItem() }
+        .onChange(of: checkForUpdates) { UpdateChecker.shared.checkIfDue() }
     }
 
     // MARK: - Cleanup mode
@@ -197,7 +200,9 @@ struct SettingsView: View {
                 }
             }
             .disabled(!hotkeyEnabled)
-            Text("Toggles dictation exactly like clicking the pill. Registered as a system hotkey, so no Input Monitoring permission is needed.")
+            Toggle("Push-to-talk (hold to record)", isOn: $pushToTalk)
+                .disabled(!hotkeyEnabled)
+            Text("\(pushToTalk ? "Records while held and stops on release." : "Toggles dictation exactly like clicking the pill.") Registered as a system hotkey, so no Input Monitoring permission is needed.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -242,6 +247,10 @@ struct SettingsView: View {
     private var loginSection: some View {
         Section("Startup") {
             Toggle("Launch at login", isOn: $launchAtLogin)
+            Toggle("Check for updates", isOn: $checkForUpdates)
+            Text("Checks GitHub once a day for a newer release. Sends no dictation data.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
             if let loginError {
                 Label(loginError, systemImage: "exclamationmark.triangle")
                     .font(.callout)

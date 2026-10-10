@@ -32,9 +32,10 @@ struct DictationPipeline {
         var text: String
         var status: DictationStatus
         var model: String
-        /// Ollama failed outright (banner-worthy), as opposed to rejecting
-        /// its own output as not-a-reformat (quiet fallback).
-        var unavailable: Bool
+        /// Banner text when Ollama failed outright, nil otherwise (including
+        /// a quiet not-a-reformat fallback).
+        var warning: String?
+        var unavailable: Bool { warning != nil }
     }
 
     var mode: CleanupMode
@@ -66,8 +67,8 @@ struct DictationPipeline {
         // model never sees the trigger phrase.
         let remainder = capture == nil ? nil : BrainstemClient.noteToSelfRemainder(in: raw)
         let result = await cleanup(remainder ?? raw, notedRemainder: remainder != nil)
-        if result.unavailable {
-            report("Text cleanup unavailable (Ollama). Inserted the raw transcript.")
+        if let warning = result.warning {
+            report(warning)
         }
         var outcome = Outcome(
             text: result.text, status: result.status, model: result.model,
@@ -101,7 +102,7 @@ struct DictationPipeline {
     func cleanup(_ text: String, notedRemainder: Bool = false) async -> Cleanup {
         guard mode != .off else {
             Log.log("pipeline cleanup: mode=off, injecting \(notedRemainder ? "note-to-self remainder" : "raw transcript") verbatim")
-            return Cleanup(text: text.trimmingCharacters(in: .whitespacesAndNewlines), status: .done, model: "raw", unavailable: false)
+            return Cleanup(text: text.trimmingCharacters(in: .whitespacesAndNewlines), status: .done, model: "raw", warning: nil)
         }
         let model = await resolveModel()
         do {
@@ -112,15 +113,21 @@ struct DictationPipeline {
             #else
             Log.log(String(format: "pipeline cleanup (%@, mode=%@, %.2fs): %d chars", model, mode.rawValue, Date().timeIntervalSince(cleanStart), cleaned.count))
             #endif
-            return Cleanup(text: cleaned, status: .done, model: model, unavailable: false)
+            return Cleanup(text: cleaned, status: .done, model: model, warning: nil)
         } catch OllamaClient.OllamaError.notAReformat {
             // Ollama works; the model answered or rewrote instead of
             // formatting. The input is the right text, so no banner.
             Log.log("pipeline cleanup REJECTED (output was not a reformat of the input), keeping the input")
-            return Cleanup(text: text, status: .cleanupFailed, model: model, unavailable: false)
+            return Cleanup(text: text, status: .cleanupFailed, model: model, warning: nil)
         } catch {
             Log.log("pipeline cleanup FAILED (keeping the input): \(error.localizedDescription)")
-            return Cleanup(text: text, status: .cleanupFailed, model: "", unavailable: true)
+            // No model installed has an actionable fix (`ollama pull ...`); say it.
+            let warning = if case .noModelInstalled = error as? OllamaClient.OllamaError {
+                error.localizedDescription
+            } else {
+                "Text cleanup unavailable (Ollama). Inserted the raw transcript."
+            }
+            return Cleanup(text: text, status: .cleanupFailed, model: "", warning: warning)
         }
     }
 }
