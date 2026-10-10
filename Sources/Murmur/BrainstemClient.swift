@@ -73,8 +73,13 @@ struct BrainstemClient {
             if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".ts.net") {
                 return true
             }
-            let octets = host.split(separator: ".").compactMap { UInt8($0) }
-            return octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
+            // Exactly four canonical decimal octets. A lenient parse would let
+            // a public name like "100.64.1.2.example.com" through, and a
+            // leading zero ("100.064.0.1") is octal to some resolvers.
+            let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+            let octets = parts.compactMap { part in UInt8(part).flatMap { String($0) == part ? $0 : nil } }
+            return parts.count == 4 && octets.count == 4
+                && octets[0] == 100 && (64...127).contains(octets[1])
         default: return false
         }
     }

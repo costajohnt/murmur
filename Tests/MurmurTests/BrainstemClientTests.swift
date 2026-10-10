@@ -164,6 +164,12 @@ final class BrainstemClientTests: XCTestCase {
         XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "brainstem.example"))
         XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "evil-ts.net"))
         XCTAssertFalse(BrainstemClient.isAllowed(scheme: "ftp", host: "localhost"))
+        // Public names that merely start with CGNAT-looking labels.
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "100.64.1.2.example.com"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "100.64.example.1.2"))
+        // Non-canonical octets (octal to some resolvers) and empty labels.
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "100.064.0.1"))
+        XCTAssertFalse(BrainstemClient.isAllowed(scheme: "http", host: "100.64..1"))
     }
 
     func testPlainHTTPToPublicHostIsRefusedBeforeSending() async {
