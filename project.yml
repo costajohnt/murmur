@@ -87,6 +87,7 @@ targets:
       - path: Sources/Murmur/BrainstemClient.swift
       - path: Sources/Murmur/AudioRecorder.swift
       - path: Sources/Murmur/AudioInputDevice.swift
+      - path: Sources/Murmur/TextInjector.swift
       - path: Sources/Murmur/ObjCExceptionBridge.m
       - path: Sources/Murmur/ObjCExceptionBridge.h
     settings:
