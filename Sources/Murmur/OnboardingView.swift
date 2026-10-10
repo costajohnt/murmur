@@ -22,6 +22,8 @@ struct OnboardingView: View {
 
     @State private var micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var accessibilityTrusted = AXIsProcessTrusted()
+    /// Installed model count; nil = Ollama not reachable.
+    @State private var ollamaModelCount: Int?
 
     /// Poll every second so grants made outside the app (Accessibility toggled
     /// in System Settings, mic granted from the OS prompt) reflect live.
@@ -58,6 +60,17 @@ struct OnboardingView: View {
                     actionEnabled: !accessibilityTrusted,
                     action: openAccessibilitySettings
                 )
+                // Informational only: cleanup is optional and off by default.
+                PermissionRow(
+                    title: "Text cleanup (optional): Ollama",
+                    detail: ollamaDetail,
+                    granted: ollamaModelCount != nil,
+                    grantedLabel: "Running",
+                    neededLabel: "Optional",
+                    actionTitle: "Refresh",
+                    actionEnabled: true,
+                    action: { Task { await refreshOllama() } }
+                )
             }
 
             Divider()
@@ -86,6 +99,20 @@ struct OnboardingView: View {
             refreshStatuses()
         }
         .onAppear(perform: refreshStatuses)
+        .task { await refreshOllama() }
+    }
+
+    private var ollamaDetail: String {
+        switch ollamaModelCount {
+        case nil: return "Not running. Cleanup stays off; install from ollama.com"
+        case 0: return "Running, no models installed. Run: ollama pull \(OllamaClient.fallbackModel)"
+        case let count?: return "Running with \(count) model\(count == 1 ? "" : "s") installed. Turn cleanup on in Settings."
+        }
+    }
+
+    @MainActor
+    private func refreshOllama() async {
+        ollamaModelCount = (try? await OllamaClient().installedModels())?.count
     }
 
     private var micActionTitle: String {
@@ -133,6 +160,8 @@ private struct PermissionRow: View {
     let title: String
     let detail: String
     let granted: Bool
+    var grantedLabel = "Granted"
+    var neededLabel = "Needed"
     let actionTitle: String
     let actionEnabled: Bool
     let action: () -> Void
@@ -147,7 +176,7 @@ private struct PermissionRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(title).font(.headline)
-                    Text(granted ? "Granted" : "Needed")
+                    Text(granted ? grantedLabel : neededLabel)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(granted ? .green : .orange)
                 }

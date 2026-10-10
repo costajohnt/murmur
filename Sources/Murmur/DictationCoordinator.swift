@@ -25,6 +25,9 @@ final class DictationCoordinator {
     /// `start()` on the same engine and could leave the mic live behind an
     /// idle pill.
     private var isStarting = false
+    /// Push-to-talk: the key came up while `recorder.start()` was still
+    /// running, so stop as soon as listening begins.
+    private var stopWhenStarted = false
     private var targetApp: NSRunningApplication?
     private var recordStart: Date?
     /// N2: auto-opening Setup on an Accessibility-missing paste failure should
@@ -47,6 +50,23 @@ final class DictationCoordinator {
             // Ignore clicks while the pipeline runs or the capture
             // confirmation is showing; both return to idle on their own.
             Log.log("pipeline: click ignored (\(pillState.phase))")
+        }
+    }
+
+    /// Push-to-talk key down: start only from idle (key repeat and a press
+    /// during processing are ignored).
+    func pushToTalkPressed() {
+        guard pillState.phase == .idle else { return }
+        startListening()
+    }
+
+    /// Push-to-talk key up: stop if listening; if still starting, stop once
+    /// the engine is running.
+    func pushToTalkReleased() {
+        if isStarting {
+            stopWhenStarted = true
+        } else if pillState.phase == .listening {
+            stopAndProcess()
         }
     }
 
@@ -76,6 +96,7 @@ final class DictationCoordinator {
             return
         }
         isStarting = true
+        stopWhenStarted = false
 
         // Snapshot the injection target NOW (didActivate-tracked, never a
         // stale frontmost read at paste time — v0 lesson).
@@ -105,6 +126,11 @@ final class DictationCoordinator {
                 recordStart = Date()
                 pillState.phase = .listening
                 Log.log("record start: engine running")
+                if stopWhenStarted {
+                    stopWhenStarted = false
+                    Log.log("push-to-talk: released while starting, stopping now")
+                    stopAndProcess()
+                }
             } catch {
                 Log.log("record start FAILED: \(error.localizedDescription)")
                 // Surface mic-denied / engine failures — the pill just returns

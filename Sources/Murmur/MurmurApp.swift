@@ -37,9 +37,18 @@ final class AppStatus: ObservableObject {
 struct MurmurApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var status = AppStatus.shared
+    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some Scene {
         MenuBarExtra("Murmur", systemImage: status.lastError == nil ? "waveform.circle" : "exclamationmark.triangle.fill") {
+            if let update = updater.available {
+                Button(UpdateChecker.isHomebrewInstall
+                    ? "Update available: v\(update.version) (brew upgrade --cask murmur)…"
+                    : "Update available: v\(update.version)…") {
+                    NSWorkspace.shared.open(update.url)
+                }
+                Divider()
+            }
             if let error = status.lastError {
                 Text("⚠︎ \(error)")
                 // No dismiss for the persistent warning: clearError() would
@@ -124,6 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // No-op unless the user enabled the hotkey in Settings (default off).
         HotkeyManager.shared.apply()
+        // No-op unless the user opted in to the daily update check.
+        UpdateChecker.shared.start()
         // Regular app now: opening the app shows the History window as the
         // main window.
         openHistory()
@@ -218,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Accessibility. Dismissing marks onboarding complete.
     func openOnboarding() {
         if onboardingWindow == nil {
-            onboardingWindow = makeWindow("Setup", width: 460, height: 480, OnboardingView(onComplete: { [weak self] in
+            onboardingWindow = makeWindow("Setup", width: 460, height: 580, OnboardingView(onComplete: { [weak self] in
                 AppSettings.hasCompletedOnboarding = true
                 self?.onboardingWindow?.close()
             }))

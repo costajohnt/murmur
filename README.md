@@ -12,6 +12,7 @@ Click the floating pill (or an optional global hotkey), speak, and the cleaned-u
 
 - Audio is captured, transcribed, and cleaned up entirely on your Mac. Nothing is sent anywhere.
 - Release builds never write your dictated words to any log file.
+- The optional update check (off by default, Settings > Startup) asks GitHub once a day for the latest release version and sends no dictation data.
 - History (text + optional audio) lives in `~/Library/Application Support/Murmur/`, on your disk only, with automatic retention pruning.
 
 ## How it works

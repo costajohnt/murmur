@@ -73,6 +73,13 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(reports, ["Text cleanup unavailable (Ollama). Inserted the raw transcript."])
     }
 
+    func testNoModelInstalledBannerSaysHowToFixIt() async {
+        let outcome = await run(pipeline(clean: { _ in throw OllamaClient.OllamaError.noModelInstalled }), "hello there world")
+        XCTAssertEqual(outcome?.text, "hello there world")
+        XCTAssertEqual(outcome?.clearsWarning, false)
+        XCTAssertEqual(reports, ["Ollama has no models installed. Run: ollama pull \(OllamaClient.fallbackModel)"])
+    }
+
     func testNotAReformatFallsBackQuietly() async {
         let outcome = await run(pipeline(clean: { _ in throw OllamaClient.OllamaError.notAReformat }), "hello there world")
         XCTAssertEqual(outcome?.text, "hello there world")
@@ -118,6 +125,6 @@ final class DictationPipelineTests: XCTestCase {
 
     func testCleanupAloneMatchesRunCleanup() async {
         let result = await pipeline(clean: { _ in throw Boom() }).cleanup("hi there")
-        XCTAssertEqual(result, .init(text: "hi there", status: .cleanupFailed, model: "", unavailable: true))
+        XCTAssertEqual(result, .init(text: "hi there", status: .cleanupFailed, model: "", warning: "Text cleanup unavailable (Ollama). Inserted the raw transcript."))
     }
 }

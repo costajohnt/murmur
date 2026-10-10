@@ -130,6 +130,9 @@ enum AppSettings {
     static let silenceAutoStopSecondsKey = "silenceAutoStopSeconds"
     static let brainstemURLKey = "brainstemURL"
     static let preferredInputDeviceUIDKey = "preferredInputDeviceUID"
+    static let pushToTalkKey = "pushToTalk"
+    static let checkForUpdatesKey = "checkForUpdates"
+    static let lastUpdateCheckKey = "lastUpdateCheck"
 
     /// Every read/write in this type goes through here. Tests swap in a
     /// throwaway suite so they never touch the user's real preferences.
@@ -188,6 +191,17 @@ enum AppSettings {
 
     static var hotkeyEnabled: Bool {
         defaults.bool(forKey: hotkeyEnabledKey)
+    }
+
+    /// Hold the hotkey to record, release to stop. Off = the hotkey toggles.
+    static var pushToTalk: Bool {
+        defaults.bool(forKey: pushToTalkKey)
+    }
+
+    /// Opt-in (default off): checking contacts GitHub, and Murmur's promise
+    /// is that nothing leaves the Mac unless the user asks for it.
+    static var checkForUpdates: Bool {
+        defaults.bool(forKey: checkForUpdatesKey)
     }
 
     static var hotkeyBinding: HotkeyBinding {
