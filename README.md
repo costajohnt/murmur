@@ -32,7 +32,7 @@ Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GP
 Vault Capture is an opt-in way to send spoken notes to a server you run instead of pasting them. It was built for a personal notes backend, but any server that implements the contract below works.
 
 - **Off by default.** It does nothing until you enter a URL in Settings > Vault Capture. Clear the field to turn it off.
-- **What is sent.** Only dictations whose raw transcript starts with "note to self" (case-insensitive, followed by a space, comma, colon, period, or nothing). The prefix is stripped and the rest of the text (after cleanup, if cleanup is on) is sent. Every other dictation is pasted as usual and never leaves the Mac. Audio is never sent.
+- **What is sent.** Only dictations whose raw transcript starts with "note to self" (case-insensitive, followed by a space, comma, colon, or period, with some text after it; a bare "note to self" is pasted like any other dictation). The prefix is stripped and the rest of the text (after cleanup, if cleanup is on) is sent. Every other dictation is pasted as usual and never leaves the Mac. Audio is never sent.
 - **Contract.** `POST {your URL}/capture` with `Content-Type: application/json` and body `{"text": "..."}`. Any 2xx response counts as success. Anything else, or a network error or a 10 second timeout, falls back to pasting the transcript (prefixed with `note to self: `) so nothing is lost.
 - **Transport.** The URL must be `https`. Plain `http` is accepted only for `localhost`, a Tailscale `*.ts.net` name, or a Tailscale `100.64.0.0/10` address, where the link is already private.
 
