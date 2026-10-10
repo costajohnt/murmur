@@ -57,6 +57,7 @@ struct OllamaClient {
         case emptyResponse
         case notAReformat
         case noModelInstalled
+        case pullFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -65,6 +66,7 @@ struct OllamaClient {
             case .emptyResponse: return "Ollama returned an empty message"
             case .notAReformat: return "Cleanup rewrote the dictation instead of formatting it; kept the original"
             case .noModelInstalled: return "Ollama has no models installed. Run: ollama pull \(OllamaClient.fallbackModel)"
+            case .pullFailed(let message): return "Download failed: \(message)"
             }
         }
     }
@@ -234,6 +236,82 @@ struct OllamaClient {
         \(rawTranscript)
         </transcript>
         """
+    }
+
+    // MARK: - Pull
+
+    /// One parsed line of /api/pull's NDJSON stream. `fraction` is the
+    /// current layer's completed/total, nil for status-only lines.
+    struct PullProgress: Equatable {
+        let status: String
+        let fraction: Double?
+        var isSuccess: Bool { status == "success" }
+    }
+
+    private struct PullRequest: Encodable {
+        let model: String
+        let stream = true
+    }
+
+    private struct PullLine: Decodable {
+        let status: String?
+        let total: Int64?
+        let completed: Int64?
+        let error: String?
+    }
+
+    /// Parses one stream line. nil for blank lines; throws on an
+    /// `{"error":…}` line or anything that isn't a pull status object.
+    static func parsePullLine(_ line: String) throws -> PullProgress? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        let decoded = try? JSONDecoder().decode(PullLine.self, from: Data(trimmed.utf8))
+        if let error = decoded?.error { throw OllamaError.pullFailed(error) }
+        guard let decoded, let status = decoded.status else {
+            throw OllamaError.pullFailed("unexpected response: \(trimmed.prefix(200))")
+        }
+        var fraction: Double?
+        if let total = decoded.total, total > 0 {
+            fraction = min(1, Double(decoded.completed ?? 0) / Double(total))
+        }
+        return PullProgress(status: status, fraction: fraction)
+    }
+
+    /// Downloads `model` via POST /api/pull, streaming progress. Returns once
+    /// Ollama reports "success"; throws OllamaError on an error line, non-200,
+    /// or a stream that ends early, and CancellationError if the task is
+    /// cancelled. The timeout is URLRequest's per-read idle timeout, not a
+    /// total, so a multi-minute download is fine while bytes keep arriving.
+    func pull(model: String, progress: @MainActor (PullProgress) -> Void) async throws {
+        let url = Self.baseURL.appendingPathComponent("api/pull")
+        var request = URLRequest(url: url, timeoutInterval: Self.requestTimeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(PullRequest(model: model))
+
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                var body = ""
+                for try await line in bytes.lines {
+                    body += line
+                    if body.count > 200 { break }
+                }
+                throw OllamaError.badStatus(http.statusCode, body: body)
+            }
+            for try await line in bytes.lines {
+                guard let update = try Self.parsePullLine(line) else { continue }
+                await progress(update)
+                if update.isSuccess { return }
+            }
+            try Task.checkCancellation()
+            throw OllamaError.pullFailed("download ended before Ollama reported success")
+        } catch let error as OllamaError {
+            throw error
+        } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+            throw OllamaError.unreachable(underlying: error.localizedDescription)
+        }
     }
 
     /// Preloads `model` into Ollama's runner so the first real cleanup doesn't

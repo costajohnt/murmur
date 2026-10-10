@@ -11,6 +11,11 @@ set -euo pipefail
 
 REPO="costajohnt/murmur"
 INSTALL_DIR="${INSTALL_DIR:-/Applications}"
+# Releases are signed with the project's self-signed cert (scripts/sign-release.sh).
+# The quarantine flag is the only thing Gatekeeper checks, and this script removes
+# it, so check the signer ourselves first: a swapped release asset fails here.
+# Overridable only so scripts/test-install.sh can run against a local build.
+REQUIREMENT="${MURMUR_REQUIREMENT:-identifier \"com.costajohnt.murmur\" and certificate leaf = H\"4324d1e1bfa1c1694ec4cb9d31f9e331170acc32\"}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -55,6 +60,8 @@ fi
 # .app bundle, producing an app that will not launch.
 ditto -x -k "$tmp/Murmur.zip" "$tmp/extracted"
 [ -d "$tmp/extracted/Murmur.app" ] || die "Release zip did not contain Murmur.app."
+codesign --verify --strict -R="$REQUIREMENT" "$tmp/extracted/Murmur.app" 2>/dev/null \
+  || die "Murmur.app in the $tag download is not signed by the Murmur release certificate. Not installing it."
 
 # A running copy would keep the old bundle busy and leave the replacement
 # half-applied. Only touch it when it is actually running: a bare
