@@ -32,8 +32,7 @@ final class TranscriptGuardReformatTests: XCTestCase {
     }
 }
 
-/// Mirrors scripts/test-guard.swift's discard/keep boundary, wired into
-/// XCTest so it runs via `xcodebuild test` instead of a standalone harness.
+/// Pins the discard/keep boundary for ASR output.
 final class TranscriptGuardTests: XCTestCase {
     private let discard = ["S", "s", ".", "", " ", "…", "- -", "??", "\n.\n", "7"]
     private let keep = [

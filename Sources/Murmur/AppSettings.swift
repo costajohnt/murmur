@@ -131,7 +131,10 @@ enum AppSettings {
     static let brainstemURLKey = "brainstemURL"
     static let preferredInputDeviceUIDKey = "preferredInputDeviceUID"
 
-    private static var defaults: UserDefaults { .standard }
+    /// Every read/write in this type goes through here. Tests swap in a
+    /// throwaway suite so they never touch the user's real preferences.
+    /// SettingsView's @AppStorage still binds to .standard directly.
+    static var defaults: UserDefaults = .standard
 
     /// One-time launch cleanup of stored values that no longer parse (e.g. a
     /// tone preset removed in a later version). The pipeline already falls back
