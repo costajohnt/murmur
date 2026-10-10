@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
 
@@ -41,33 +41,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
 
-      # Built the same way release.yml builds it - ad-hoc signed via
-      # project.yml rather than unsigned - so this job exercises the artifact
-      # users actually download, and test-install.sh below can verify it.
-      - name: Build (Release)
-        run: |
-          xcodebuild \
-            -project Murmur.xcodeproj \
-            -scheme Murmur \
-            -configuration Release \
-            -derivedDataPath build/DerivedData \
-            build
-
-      # Main pushes only: PR runs never get the signing secrets. Catches a
-      # broken signing step before a tag does.
-      - name: Sign with the release cert
-        if: github.event_name == 'push'
-        env:
-          MURMUR_SIGNING_P12: ${{ secrets.MURMUR_SIGNING_P12 }}
-          MURMUR_SIGNING_P12_PASSWORD: ${{ secrets.MURMUR_SIGNING_P12_PASSWORD }}
-        run: scripts/sign-release.sh build/DerivedData/Build/Products/Release/Murmur.app
-
-      # Same gate as the Release build above - this step has nothing to
-      # install without it.
-      - name: Test install.sh against the Release build
-        if: github.event_name == 'push'
-        run: scripts/test-install.sh
-
+      # Before the Release build and install check, so a failure there never
+      # hides the test result.
       - name: Run unit tests
         run: |
           xcodebuild \
@@ -78,3 +53,19 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
+
+      # Built the same way release.yml builds it (ad-hoc signed, hardened
+      # runtime) so test-install.sh exercises a real bundle. The release-cert
+      # signing itself runs only in release.yml: the key stays out of CI runs.
+      - name: Build (Release)
+        run: |
+          xcodebuild \
+            -project Murmur.xcodeproj \
+            -scheme Murmur \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            build
+
+      - name: Test install.sh against the Release build
+        if: github.event_name == 'push'
+        run: scripts/test-install.sh
