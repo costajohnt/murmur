@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Metrics
@@ -47,12 +48,38 @@ enum PillPhase {
     case captured
 }
 
+/// Parakeet model lifecycle. The first run downloads hundreds of MB inside
+/// `DictationCoordinator.ensureAsr()`; this makes that visible in the pill
+/// and in Setup.
+enum AsrModelState: Equatable {
+    case notLoaded
+    /// Fraction 0...1 when FluidAudio reports one.
+    case downloading(Double?)
+    /// Compiling / loading into the ANE (or reading a cached copy).
+    case loading
+    case ready
+    case failed(String)
+
+    /// Short human label, nil once ready.
+    var label: String? {
+        switch self {
+        case .notLoaded: return "Speech model not loaded"
+        case .downloading(let fraction?): return "Downloading speech model… \(Int(fraction * 100))%"
+        case .downloading(nil): return "Downloading speech model…"
+        case .loading: return "Loading speech model…"
+        case .ready: return nil
+        case .failed: return "Speech model failed to load"
+        }
+    }
+}
+
 @MainActor
 final class PillState: ObservableObject {
     /// Number of bars in the listening-state level meter.
     static let historyLength = 7
 
     @Published var phase: PillPhase = .idle
+    @Published var asrModel: AsrModelState = .notLoaded
     /// Live mic level 0..1 (dB-mapped, smoothed in AudioRecorder).
     /// Not @Published: only the DEBUG meter test reads it, and publishing
     /// it re-rendered observers ~30 times a second for nothing.
@@ -98,6 +125,7 @@ final class PillPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     private let pillState = DictationCoordinator.shared.pillState
+    private var phaseSink: AnyCancellable?
 
     init() {
         let size = NSSize(width: PillMetrics.panelWidth, height: PillMetrics.panelHeight)
@@ -136,10 +164,16 @@ final class PillPanel: NSPanel {
 
         positionBottomCenter()
 
-        // A4: the pill anchors to NSScreen.main. If the display config changes
-        // (screen added/removed, resolution/arrangement change) the old main
-        // screen — and the pill with it — can end up off-screen. Re-anchor to
-        // the current main screen whenever the parameters change.
+        // Follow the pointer: a hotkey/push-to-talk recording starts with the
+        // pill on whichever screen the user is working on.
+        phaseSink = pillState.$phase
+            .removeDuplicates()
+            .filter { $0 == .listening }
+            .sink { [weak self] _ in self?.positionBottomCenter() }
+
+        // A4: if the display config changes (screen added/removed,
+        // resolution/arrangement change) the pill can end up off-screen.
+        // Re-anchor whenever the parameters change.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -153,8 +187,13 @@ final class PillPanel: NSPanel {
     }
 
     @objc private func screenParametersChanged(_ note: Notification) {
-        Log.log("pill: screen parameters changed, repositioning to current main screen")
+        Log.log("pill: screen parameters changed, repositioning")
         positionBottomCenter()
+    }
+
+    override func orderFrontRegardless() {
+        positionBottomCenter()
+        super.orderFrontRegardless()
     }
 
     @objc private func pillClicked(_ recognizer: NSClickGestureRecognizer) {
@@ -191,12 +230,17 @@ final class PillPanel: NSPanel {
         }
     }
 
+    /// Bottom-center of the screen under the pointer, else NSScreen.main.
+    /// The pill isn't draggable, so there's no saved position to preserve.
     private func positionBottomCenter() {
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let x = visible.midX - frame.width / 2
-        let y = visible.minY + PillMetrics.bottomMargin
-        setFrameOrigin(NSPoint(x: x, y: y))
+        guard let origin = PillPlacement.origin(
+            size: frame.size,
+            mouse: NSEvent.mouseLocation,
+            screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) },
+            main: NSScreen.main?.visibleFrame,
+            bottomMargin: PillMetrics.bottomMargin
+        ) else { return }
+        setFrameOrigin(origin)
     }
 }
 
@@ -222,6 +266,7 @@ struct PillView: View {
             height: isExpanded ? PillMetrics.activeHeight : PillMetrics.idleHeight
         )
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isExpanded)
+        .help(state.asrModel.label ?? "")
         // Center the animating capsule in the fixed-size panel.
         .frame(width: PillMetrics.panelWidth, height: PillMetrics.panelHeight)
     }
@@ -245,14 +290,30 @@ struct PillView: View {
     private var phaseContent: some View {
         switch state.phase {
         case .idle:
-            // Intentionally empty: the idle pill is just a translucent
-            // lozenge — no dots, no icons (John's call; if it proves too
-            // invisible, add a whisper-faint indicator later).
-            EmptyView()
+            // Intentionally empty once the model is ready: the idle pill is
+            // just a translucent lozenge. While the first-run download runs,
+            // a faint fill tracks its progress.
+            if case .downloading(let fraction?) = state.asrModel {
+                Capsule()
+                    .fill(Color.white.opacity(0.35))
+                    .frame(width: PillMetrics.idleWidth * fraction)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         case .listening:
             ListeningControls(levels: state.levelHistory)
         case .processing:
-            SweepDot()
+            // A dictation made before the model arrives waits on it; say why
+            // instead of sweeping for minutes.
+            if let label = state.asrModel.label {
+                Text(label.replacingOccurrences(of: "speech model", with: "model"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 10)
+            } else {
+                SweepDot()
+            }
         case .captured:
             CapturedCheck()
         }

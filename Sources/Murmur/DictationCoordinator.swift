@@ -322,14 +322,31 @@ final class DictationCoordinator {
     /// Lazy-loads Parakeet once and keeps it resident (ANE, ~66 MB).
     func ensureAsr() async throws -> AsrManager {
         if let asrLoad { return try await asrLoad.value }
+        let state = pillState
         let load = Task { @MainActor in
             Log.log("asr: loading Parakeet TDT v2 (first ever run downloads the model)")
-            let start = Date()
-            let models = try await AsrModels.downloadAndLoad(version: .v2)
-            let manager = AsrManager(config: .default)
-            try await manager.loadModels(models)
-            Log.log(String(format: "asr: models ready in %.2fs", Date().timeIntervalSince(start)))
-            return manager
+            state.asrModel = .loading
+            do {
+                let start = Date()
+                let models = try await AsrModels.downloadAndLoad(version: .v2) { progress in
+                    let next = Self.modelState(for: progress)
+                    Task { @MainActor in
+                        // Hops can land after the load settled; don't regress.
+                        switch state.asrModel {
+                        case .ready, .failed: return
+                        default: state.asrModel = next
+                        }
+                    }
+                }
+                let manager = AsrManager(config: .default)
+                try await manager.loadModels(models)
+                Log.log(String(format: "asr: models ready in %.2fs", Date().timeIntervalSince(start)))
+                state.asrModel = .ready
+                return manager
+            } catch {
+                state.asrModel = .failed(error.localizedDescription)
+                throw error
+            }
         }
         asrLoad = load
         do {
@@ -338,6 +355,19 @@ final class DictationCoordinator {
             // Forget the failed load so the next dictation retries.
             asrLoad = nil
             throw error
+        }
+    }
+
+    /// FluidAudio reports a cached model as `downloading(0 of 0)`, so only a
+    /// real file count means a download is running.
+    nonisolated private static func modelState(for progress: DownloadUtils.DownloadProgress) -> AsrModelState {
+        switch progress.phase {
+        case .downloading(_, let total) where total > 0:
+            return .downloading(min(max(progress.fractionCompleted, 0), 1))
+        case .listing:
+            return .downloading(nil)
+        default:
+            return .loading
         }
     }
 
@@ -380,6 +410,7 @@ final class DictationCoordinator {
                 // disk) previously surfaced only when that first dictation
                 // failed too, with nothing in between to explain why.
                 Log.log("asr preload FAILED (will retry on first dictation): \(error)")
+                AppStatus.shared.report("Speech model failed to load. Open Setup to retry.")
             }
         }
     }
