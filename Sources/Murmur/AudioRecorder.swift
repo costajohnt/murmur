@@ -229,9 +229,8 @@ final class AudioRecorder {
             // there while stop() nils it on the main thread with no lock (#55).
             // Owned by the closure, it lives exactly as long as the tap does and
             // no thread ever reads a reference another is releasing.
-            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
-                self?.appendConverted(buffer, using: converter)
-            }
+            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat,
+                             block: Self.tapBlock(for: self, converter: converter))
             self.engine.prepare()
         }
         try engine.start()
@@ -370,6 +369,19 @@ final class AudioRecorder {
         lock.lock()
         defer { lock.unlock() }
         return samples
+    }
+
+    /// Built outside `start()` on purpose: a closure literal written inside a
+    /// @MainActor method is inferred main-actor-isolated, and the audio render
+    /// thread calling it is exactly what Swift's dynamic isolation checks trap
+    /// on. A nonisolated static factory gives the tap no isolation at all.
+    private nonisolated static func tapBlock(
+        for recorder: AudioRecorder,
+        converter: AVAudioConverter
+    ) -> AVAudioNodeTapBlock {
+        { [weak recorder] buffer, _ in
+            recorder?.appendConverted(buffer, using: converter)
+        }
     }
 
     private func appendConverted(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter) {
