@@ -22,12 +22,8 @@ extension AppDelegate {
     /// scripting. DEBUG-only — these are system-wide observers any local
     /// process could post to (mic capture, injection, history mutation), so
     /// they must never exist in a release build. Example:
-    ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.murmur.spikeA"), object: nil, userInfo: nil, deliverImmediately: true)'
+    ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.murmur.spikeC"), object: nil, userInfo: nil, deliverImmediately: true)'
     func registerTestHooks() {
-        onMainActor("com.costajohnt.murmur.spikeA") { _ in
-            Log.log("test hook: spikeA triggered")
-            SpikeA.run()
-        }
         onMainActor("com.costajohnt.murmur.spikeC") { _ in
             Log.log("test hook: spikeC triggered")
             SpikeC.run()

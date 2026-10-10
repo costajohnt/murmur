@@ -173,7 +173,7 @@ final class DictationCoordinator {
         let raw: String
         do {
             let asrStart = Date()
-            let asr = try await ensureAsr()
+            let asr = try await ensureAsr(timeout: 120)
             var decoderState = try TdtDecoderState()
             let result = try await asr.transcribe(samples, decoderState: &decoderState)
             raw = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -184,6 +184,11 @@ final class DictationCoordinator {
             #else
             Log.log(String(format: "pipeline ASR (%.3fs): %d chars", Date().timeIntervalSince(asrStart), raw.count))
             #endif
+        } catch is AsrLoadTimeout {
+            Log.log("pipeline ASR: model still loading after timeout, giving up on this dictation")
+            AppStatus.shared.report("Speech model still downloading, try again shortly. The recording is in History.")
+            persist(status: .asrFailed, audioPath: audioPath, durationMs: durationMs)
+            return
         } catch {
             Log.log("pipeline ASR FAILED: \(error)")
             AppStatus.shared.report("Transcription failed. See history for the recording.")
@@ -307,6 +312,34 @@ final class DictationCoordinator {
             // Forget the failed load so the next dictation retries.
             asrLoad = nil
             throw error
+        }
+    }
+
+    private struct AsrLoadTimeout: Error {}
+
+    /// `ensureAsr()` bounded for the processing path: a first-run model
+    /// download can take minutes, and the pill would sit in `.processing` the
+    /// whole time. Gives up after `seconds` but leaves the shared load running
+    /// (awaiting `asrLoad.value` can't be cancelled anyway), so the next
+    /// dictation picks it up.
+    private func ensureAsr(timeout seconds: Double) async throws -> AsrManager {
+        @MainActor final class Once { var resumed = false }
+        let once = Once()
+        return try await withCheckedThrowingContinuation { continuation in
+            let timer = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                guard !once.resumed else { return }
+                once.resumed = true
+                continuation.resume(throwing: AsrLoadTimeout())
+            }
+            Task { @MainActor in
+                let result: Result<AsrManager, Error>
+                do { result = .success(try await self.ensureAsr()) } catch { result = .failure(error) }
+                timer.cancel()
+                guard !once.resumed else { return }
+                once.resumed = true
+                continuation.resume(with: result)
+            }
         }
     }
 

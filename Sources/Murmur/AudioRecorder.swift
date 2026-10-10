@@ -495,6 +495,8 @@ final class AudioRecorder {
             commonFormat: .pcmFormatFloat32,
             interleaved: false
         )
+        // History audio is private: owner-only, set before any samples land.
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: AudioRecorder.sampleRate,

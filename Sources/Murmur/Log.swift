@@ -13,6 +13,8 @@ import os
 ///   HistoryView), so release builds never emit the user's words anywhere.
 enum Log {
     #if DEBUG
+    // ponytail: duplicates HistoryStore.supportDir, which is @MainActor and so
+    // can't be read from Log's any-thread callers. Keep the two in step.
     static var path: String {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Murmur", isDirectory: true)
@@ -28,13 +30,17 @@ enum Log {
         let ts = ISO8601DateFormatter().string(from: Date())
         let line = "[\(ts)] \(message)"
         print(line)
-        appendToFile(line + "\n")
+        // Callers log from any thread; unsynchronized seek+write pairs would
+        // interleave or clobber each other's lines.
+        fileLock.withLock { appendToFile(line + "\n") }
         #else
         logger.log("\(message, privacy: .private)")
         #endif
     }
 
     #if DEBUG
+    private static let fileLock = NSLock()
+
     private static func appendToFile(_ text: String) {
         let url = URL(fileURLWithPath: path)
         guard let data = text.data(using: .utf8) else { return }

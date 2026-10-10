@@ -86,7 +86,7 @@ final class PillHostingView<Content: View>: NSHostingView<Content> {
 
 // MARK: - Panel
 
-/// Spike B: non-activating floating pill.
+/// Non-activating floating pill.
 ///
 /// Clicking this panel must NOT steal keyboard focus from the frontmost app:
 ///   - styleMask [.nonactivatingPanel, .borderless]

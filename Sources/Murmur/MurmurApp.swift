@@ -62,15 +62,8 @@ struct MurmurApp: App {
                 appDelegate.openOnboarding()
             }
             #if DEBUG
-            // Dev-only spike triggers — compiled out of release builds
-            //.
+            // Dev-only trigger, compiled out of release builds.
             Divider()
-            Button("Spike A: transcribe fixture") {
-                SpikeA.run()
-            }
-            Button("Spike B: show floating pill") {
-                appDelegate.showPill()
-            }
             Button("Spike C: inject test string (3s delay)") {
                 SpikeC.run()
             }
@@ -165,25 +158,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.log("pill panel shown (bottom-center)")
     }
 
+    /// Shared shape of the History/Settings/Setup windows: centered, titled
+    /// "Murmur — <title>", kept alive after close so reopening reuses it.
+    private func makeWindow<Content: View>(
+        _ title: String, width: CGFloat, height: CGFloat, resizable: Bool = false, _ content: Content
+    ) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            styleMask: resizable ? [.titled, .closable, .resizable] : [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Murmur — \(title)"
+        window.contentView = NSHostingView(rootView: content)
+        window.center()
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
     func openHistory() {
         guard let store = HistoryStore.shared else {
             Log.log("history: store unavailable, cannot open window")
             return
         }
         if historyWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 820, height: 720),
-                styleMask: [.titled, .closable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Murmur — History"
-            window.contentView = NSHostingView(
-                rootView: HistoryView().modelContainer(store.container)
-            )
-            window.center()
-            window.isReleasedWhenClosed = false
-            historyWindow = window
+            historyWindow = makeWindow(
+                "History", width: 820, height: 720, resizable: true,
+                HistoryView().modelContainer(store.container))
         }
         historyWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -204,17 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func openSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 700),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Murmur — Settings"
-            window.contentView = NSHostingView(rootView: SettingsView())
-            window.center()
-            window.isReleasedWhenClosed = false
-            settingsWindow = window
+            settingsWindow = makeWindow("Settings", width: 460, height: 700, SettingsView())
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -227,20 +218,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Accessibility. Dismissing marks onboarding complete.
     func openOnboarding() {
         if onboardingWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Murmur — Setup"
-            window.contentView = NSHostingView(rootView: OnboardingView(onComplete: { [weak self] in
+            onboardingWindow = makeWindow("Setup", width: 460, height: 480, OnboardingView(onComplete: { [weak self] in
                 AppSettings.hasCompletedOnboarding = true
                 self?.onboardingWindow?.close()
             }))
-            window.center()
-            window.isReleasedWhenClosed = false
-            onboardingWindow = window
         }
         onboardingWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

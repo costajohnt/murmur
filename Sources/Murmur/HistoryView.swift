@@ -224,6 +224,12 @@ private struct TranscriptRow: View {
         let mode = AppSettings.cleanupMode == .off ? CleanupMode.light : AppSettings.cleanupMode
         Task { @MainActor in
             let result = await DictationPipeline.live(mode: mode, brainstemURL: "").cleanup(raw)
+            // The entry may have been deleted while the model ran.
+            guard !entry.isDeleted, entry.modelContext != nil else {
+                Log.log("history re-clean: entry deleted meanwhile, result dropped")
+                recleaning = false
+                return
+            }
             if result.status == .done {
                 entry.cleanedText = result.text
                 entry.modelName = result.model
