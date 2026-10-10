@@ -138,6 +138,13 @@ final class BrainstemClientTests: StubbedNetworkTestCase {
         }
     }
 
+    func testBadStatusDescriptionOmitsResponseBody() {
+        // The description is logged; a server echoing the request must not be
+        // able to put transcript text there.
+        let error = BrainstemClient.CaptureError.badStatus(500, body: "echo: my private note")
+        XCTAssertEqual(error.errorDescription, "Brainstem HTTP 500")
+    }
+
     func testNetworkFailureThrows() async throws {
         StubURLProtocol.handler = { _ in
             throw URLError(.notConnectedToInternet)

@@ -24,7 +24,10 @@ struct BrainstemClient {
             case .insecureURL(let base):
                 return "Brainstem URL must be https (plain http only for a Tailscale *.ts.net or 100.64.0.0/10 host, or localhost): \(base)"
             case .invalidResponse: return "Brainstem returned a non-HTTP response"
-            case .badStatus(let code, let body): return "Brainstem HTTP \(code): \(body.prefix(200))"
+            // The body is kept on the case for callers that want it, but left
+            // out of the description: this string is logged, and a server that
+            // echoes the request would otherwise put transcript text in the log.
+            case .badStatus(let code, _): return "Brainstem HTTP \(code)"
             }
         }
     }
