@@ -5,6 +5,9 @@ import CoreGraphics
 /// snapshot clipboard → set string → CGEvent ⌘V → restore clipboard.
 /// Optionally activates an explicit target app first (used by history
 /// "Insert at cursor", where our own window is frontmost).
+/// Main actor: the injection state and the pasteboard dance live there. The
+/// pure pasteboard helpers are `nonisolated` so tests can call them directly.
+@MainActor
 enum TextInjector {
     /// Delay between activating the target app and posting ⌘V.
     private static let activationDelay: TimeInterval = 0.35
@@ -19,13 +22,13 @@ enum TextInjector {
 
     /// nspasteboard.org markers. Transient: clipboard managers should not
     /// record this content. Concealed: it is sensitive, don't display it.
-    static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
-    static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    nonisolated static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+    nonisolated static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
     /// Serializes injections (A2): only one paste may be mid-flight — snapshot →
     /// set → ⌘V → restore. A second `inject` arriving inside that window is
     /// dropped rather than racing on the shared pasteboard (e.g. rapid history
-    /// "Insert"). Accessed on the main thread only; `inject` hops to main first.
+    /// "Insert"). Main-actor isolated with the rest of the enum.
     private static var isInjecting = false
 
     /// Injects `text` at the cursor. If `target` is provided and not active,
@@ -35,13 +38,6 @@ enum TextInjector {
         into target: NSRunningApplication? = nil,
         completion: ((_ ok: Bool, _ error: String?) -> Void)? = nil
     ) {
-        // Serialization state + the pasteboard dance run on main. Hop there if
-        // called off-main so `isInjecting` is never read/written concurrently.
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { inject(text, into: target, completion: completion) }
-            return
-        }
-
         guard AXIsProcessTrusted() else {
             Log.log("inject FAILED: Accessibility permission not granted (System Settings > Privacy & Security > Accessibility)")
             completion?(false, "Accessibility permission not granted")
@@ -134,7 +130,7 @@ enum TextInjector {
 
     /// Writes dictated text marked private (M2): `.currentHostOnly` keeps it
     /// off Universal Clipboard, the markers keep it out of clipboard managers.
-    static func writeDictation(_ text: String, to pasteboard: NSPasteboard) {
+    nonisolated static func writeDictation(_ text: String, to pasteboard: NSPasteboard) {
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         pasteboard.setString(text, forType: .string)
         pasteboard.setData(Data(), forType: transientType)
@@ -146,7 +142,7 @@ enum TextInjector {
     /// leave their clipboard alone instead of clobbering it with the stale
     /// snapshot (A2). Returns whether it restored.
     @discardableResult
-    static func restoreIfUnchanged(
+    nonisolated static func restoreIfUnchanged(
         _ pasteboard: NSPasteboard,
         items: [[NSPasteboard.PasteboardType: Data]],
         ourChangeCount: Int
@@ -156,7 +152,7 @@ enum TextInjector {
         return true
     }
 
-    static func snapshot(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+    nonisolated static func snapshot(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
         (pasteboard.pasteboardItems ?? []).map { item in
             var entry: [NSPasteboard.PasteboardType: Data] = [:]
             for type in item.types {
@@ -171,7 +167,7 @@ enum TextInjector {
     /// Puts the user's snapshot back, also `.currentHostOnly` + transient: it is
     /// their data, already synced/recorded when they first copied it, so the
     /// restore must not re-broadcast it as a fresh copy.
-    static func restore(_ pasteboard: NSPasteboard, items: [[NSPasteboard.PasteboardType: Data]]) {
+    nonisolated static func restore(_ pasteboard: NSPasteboard, items: [[NSPasteboard.PasteboardType: Data]]) {
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         guard !items.isEmpty else { return }
         let restored = items.map { entry -> NSPasteboardItem in

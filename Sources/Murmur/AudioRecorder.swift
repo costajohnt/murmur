@@ -38,7 +38,10 @@ final class AudioRecorder {
             object: engine,
             queue: nil
         ) { [weak self] _ in
-            self?.handleConfigurationChange()
+            // Hop to the main actor so the reset serializes with start()/
+            // stop(), which run there too. Reacting on the posting thread let
+            // an idle-state check race a start() that began right after it.
+            Task { @MainActor in self?.handleConfigurationChange() }
         }
     }
 
@@ -72,8 +75,9 @@ final class AudioRecorder {
         case deviceChanged
     }
 
-    /// Fires at most once per recording, on the audio thread, when the
-    /// recording stops itself — sustained near-silence, or the length cap.
+    /// Fires at most once per recording when the recording stops itself:
+    /// sustained near-silence or the length cap (audio thread), or a route
+    /// change (main actor).
     /// Same cross-thread setup/guard as `onLevel` above. The consumer is
     /// responsible for hopping to the main actor and driving the same
     /// stop-and-process path as a manual stop.
@@ -82,10 +86,10 @@ final class AudioRecorder {
         set { lock.lock(); defer { lock.unlock() }; _onAutoStop = newValue }
     }
     private var _onAutoStop: ((AutoStopReason) -> Void)?
-    /// `recordStartTime`/`silenceStartTime`/`didFireAutoStop`/
-    /// `silenceAutoStopDuration` below are written on the main thread in
-    /// `start()` and read/written on the audio thread in
-    /// `checkSilenceAutoStop()` — every access to them goes through `lock`.
+    /// `smoothedLevel` above and `recordStartTime`/`silenceStartTime`/
+    /// `didFireAutoStop`/`silenceAutoStopDuration` below are written on the
+    /// main actor in `start()` and read/written on the audio thread in
+    /// `updateLevel()`, so every access to them goes through `lock`.
     private var recordStartTime: Date?
     private var silenceStartTime: Date?
     private var didFireAutoStop = false
@@ -129,12 +133,15 @@ final class AudioRecorder {
 
     enum RecorderError: LocalizedError {
         case micDenied
+        /// The input never reported a usable format (0 Hz / 0 channels).
+        case deviceNotReady
         case converterUnavailable
         case engineFailed(step: String, reason: String)
 
         var errorDescription: String? {
             switch self {
             case .micDenied: return "Microphone access denied (System Settings > Privacy & Security > Microphone)"
+            case .deviceNotReady: return "The microphone isn't ready (Bluetooth may still be connecting). Try again."
             case .converterUnavailable: return "Could not create audio converter for input format"
             case .engineFailed(let step, let reason):
                 return "Could not start the microphone (\(step): \(reason)). Try again, or reconnect the input device."
@@ -143,6 +150,9 @@ final class AudioRecorder {
     }
 
     /// Requests mic permission if needed, then starts the engine tap.
+    /// Main actor, like `stop()` and the configuration-change handler, so the
+    /// engine graph is only ever mutated from one place.
+    @MainActor
     func start() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -160,7 +170,6 @@ final class AudioRecorder {
         defer { setRecordingState(didStart ? .recording : .idle) }
 
         resetForNewRecording()
-        smoothedLevel = 0
 
         // A previous recording can leave the engine running (e.g. stop() ran
         // while the hardware was mid-reset, or a device change restarted it
@@ -205,7 +214,7 @@ final class AudioRecorder {
             inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
         }
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw RecorderError.micDenied
+            throw RecorderError.deviceNotReady
         }
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw RecorderError.converterUnavailable
@@ -220,27 +229,21 @@ final class AudioRecorder {
             // there while stop() nils it on the main thread with no lock (#55).
             // Owned by the closure, it lives exactly as long as the tap does and
             // no thread ever reads a reference another is releasing.
-            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat) { [weak self] buffer, _ in
-                self?.appendConverted(buffer, using: converter)
-            }
+            input.installTap(onBus: 0, bufferSize: 1600, format: inputFormat,
+                             block: Self.tapBlock(for: self, converter: converter))
             self.engine.prepare()
         }
         try engine.start()
-        lock.lock()
-        engineStartedAt = Date()
-        lock.unlock()
+        lock.withLock { engineStartedAt = Date() }
         didStart = true
     }
 
-    /// Synchronous on purpose: `NSLock` may not be taken directly from an
-    /// async context (an error in the Swift 6 language mode). There is no
-    /// suspension point inside this critical section, so nothing about the
-    /// locking itself changes by moving it here.
     private func resetForNewRecording() {
         lock.lock()
         defer { lock.unlock() }
         recordingState = .starting
         samples.removeAll()
+        smoothedLevel = 0
         recordStartTime = Date()
         silenceStartTime = nil
         didFireAutoStop = false
@@ -248,12 +251,13 @@ final class AudioRecorder {
     }
 
     private func setRecordingState(_ state: RecordingState) {
-        lock.lock()
-        recordingState = state
-        lock.unlock()
+        lock.withLock { recordingState = state }
     }
 
-    /// Arrives on an arbitrary thread when the audio graph changes.
+    /// Hopped onto the main actor from the configuration-change observer, so
+    /// it never interleaves with start()/stop(); the state checks below see
+    /// whatever those left behind.
+    @MainActor
     private func handleConfigurationChange() {
         let stopForDeviceChange: Bool = {
             lock.lock()
@@ -349,6 +353,7 @@ final class AudioRecorder {
     }
 
     /// Stops recording and returns the accumulated 16 kHz mono samples.
+    @MainActor
     func stop() -> [Float] {
         // Teardown touches the same graph start() does, so it can raise for the
         // same reasons. The samples are already captured and there is nothing
@@ -357,17 +362,26 @@ final class AudioRecorder {
             self.engine.inputNode.removeTap(onBus: 0)
             self.engine.stop()
         }
-        // Only now go idle. The configuration-change observer runs on the
-        // posting thread and resets the engine when it sees .idle; flipping
-        // state before the teardown let a route change land inside it and
-        // stop/reset the engine concurrently with removeTap/stop above (#50).
-        // A notification during the teardown instead sees .recording and at
-        // worst fires onAutoStop(.deviceChanged), which the coordinator drops
-        // because its phase already left .listening.
+        // Only now go idle. The configuration-change handler resets the engine
+        // when it sees .idle (#50); it runs on the main actor now, so it can no
+        // longer land inside this teardown either way.
         setRecordingState(.idle)
         lock.lock()
         defer { lock.unlock() }
         return samples
+    }
+
+    /// Built outside `start()` on purpose: a closure literal written inside a
+    /// @MainActor method is inferred main-actor-isolated, and the audio render
+    /// thread calling it is exactly what Swift's dynamic isolation checks trap
+    /// on. A nonisolated static factory gives the tap no isolation at all.
+    private nonisolated static func tapBlock(
+        for recorder: AudioRecorder,
+        converter: AVAudioConverter
+    ) -> AVAudioNodeTapBlock {
+        { [weak recorder] buffer, _ in
+            recorder?.appendConverted(buffer, using: converter)
+        }
     }
 
     private func appendConverted(_ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter) {
@@ -388,9 +402,9 @@ final class AudioRecorder {
         }
         guard convError == nil, let channel = out.floatChannelData else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
-        lock.lock()
-        let hitCap = Self.append(chunk, to: &samples, cap: Self.maxSamples, didFireAutoStop: &didFireAutoStop)
-        lock.unlock()
+        let hitCap = lock.withLock {
+            Self.append(chunk, to: &samples, cap: Self.maxSamples, didFireAutoStop: &didFireAutoStop)
+        }
         updateLevel(chunk)
         if hitCap {
             Log.log("recorder: hit the \(Int(Self.maxRecordingSeconds / 60))-minute recording cap, stopping")
@@ -415,8 +429,9 @@ final class AudioRecorder {
     }
 
     /// RMS → dB → normalized 0..1 with asymmetric smoothing. Runs on the
-    /// audio thread; only touches `smoothedLevel` (audio thread only) and the
-    /// `onLevel` callback.
+    /// audio thread. `smoothedLevel` is reset by `start()` on the main actor,
+    /// so it is read and written under `lock`; the callbacks run after
+    /// releasing it (the lock is non-reentrant and the getters re-lock).
     private func updateLevel(_ chunk: [Float]) {
         guard !chunk.isEmpty else { return }
         var sum: Float = 0
@@ -424,42 +439,43 @@ final class AudioRecorder {
         let rms = (sum / Float(chunk.count)).squareRoot()
         let db = 20 * log10(max(rms, 1e-7))
         let normalized = min(max((db - Self.dbFloor) / (Self.dbCeiling - Self.dbFloor), 0), 1)
-        let alpha = normalized > smoothedLevel ? Self.attackAlpha : Self.decayAlpha
-        smoothedLevel += alpha * (normalized - smoothedLevel)
-        onLevel?(smoothedLevel)
-        checkSilenceAutoStop()
-    }
-
-    /// Accumulates time spent at/below `silenceThreshold` and fires
-    /// `onAutoStop` once that exceeds `silenceAutoStopDuration`, after
-    /// the grace period and skipped entirely when auto-stop is off (0).
-    /// Runs on the audio thread, right after each level update. The
-    /// shared-state check runs under `lock`; the callback itself is invoked
-    /// after releasing it, both to avoid holding the (non-reentrant) lock
-    /// during arbitrary consumer code and because `onAutoStop`'s own
-    /// getter re-locks.
-    private func checkSilenceAutoStop() {
-        let shouldFire: Bool = {
-            lock.lock()
-            defer { lock.unlock() }
-            guard silenceAutoStopDuration > 0, !didFireAutoStop,
-                  let recordStartTime else { return false }
-            let now = Date()
-            guard now.timeIntervalSince(recordStartTime) >= Self.silenceGraceSeconds else { return false }
-
-            guard smoothedLevel <= Self.silenceThreshold else {
-                silenceStartTime = nil
-                return false
-            }
-            let start = silenceStartTime ?? now
-            silenceStartTime = start
-            guard now.timeIntervalSince(start) >= silenceAutoStopDuration else { return false }
-            didFireAutoStop = true
-            return true
-        }()
+        let now = Date()
+        let (level, shouldFire): (Float, Bool) = lock.withLock {
+            let alpha = normalized > smoothedLevel ? Self.attackAlpha : Self.decayAlpha
+            smoothedLevel += alpha * (normalized - smoothedLevel)
+            guard !didFireAutoStop, let recordStartTime else { return (smoothedLevel, false) }
+            let step = Self.silenceStep(
+                level: smoothedLevel, now: now, recordStart: recordStartTime,
+                silenceStart: silenceStartTime, duration: silenceAutoStopDuration
+            )
+            silenceStartTime = step.silenceStart
+            if step.fire { didFireAutoStop = true }
+            return (smoothedLevel, step.fire)
+        }
+        onLevel?(level)
         if shouldFire {
             onAutoStop?(.silence)
         }
+    }
+
+    /// The silence auto-stop decision, pure so it can be tested without an
+    /// engine or a clock. Accumulates time at/below `threshold` and fires once
+    /// that reaches `duration`; never inside the `grace` window after
+    /// `recordStart`, never when `duration` is 0 (auto-stop off). Loud audio
+    /// clears the accumulated silence. Returns the new silence-start mark.
+    static func silenceStep(
+        level: Float,
+        now: Date,
+        recordStart: Date,
+        silenceStart: Date?,
+        duration: TimeInterval,
+        grace: TimeInterval = silenceGraceSeconds,
+        threshold: Float = silenceThreshold
+    ) -> (fire: Bool, silenceStart: Date?) {
+        guard duration > 0, now.timeIntervalSince(recordStart) >= grace else { return (false, silenceStart) }
+        guard level <= threshold else { return (false, nil) }
+        let start = silenceStart ?? now
+        return (now.timeIntervalSince(start) >= duration, start)
     }
 
     /// Writes samples to a 16-bit PCM WAV at 16 kHz mono.
