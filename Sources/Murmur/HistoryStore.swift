@@ -182,14 +182,14 @@ final class HistoryStore {
     let container: ModelContainer
     var context: ModelContext { container.mainContext }
 
-    static var supportDir: URL {
+    nonisolated static var supportDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Murmur", isDirectory: true)
     }
 
     /// Pre-rename data directory (the app shipped its early life as
     /// "wispr-local"). Migrated once by `migrateLegacyDataIfNeeded()`.
-    static var legacySupportDir: URL {
+    nonisolated static var legacySupportDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("wispr-local", isDirectory: true)
     }
@@ -232,14 +232,14 @@ final class HistoryStore {
     /// Post-migration fixup: entries created pre-rename persisted absolute
     /// `audioPath`s under .../wispr-local/audio/. Point them at the new dir
     /// so playback/delete keep working.
-    private func relinkAudioPaths() {
-        let oldPrefix = Self.legacySupportDir.path
+    private func relinkAudioPaths(from oldDir: URL, to newDir: URL) {
+        let oldPrefix = oldDir.path
         let descriptor = FetchDescriptor<Dictation>()
         guard let all = try? context.fetch(descriptor) else { return }
         var relinked = 0
         for entry in all {
             if let path = entry.audioPath, path.hasPrefix(oldPrefix) {
-                entry.audioPath = Self.supportDir.path + path.dropFirst(oldPrefix.count)
+                entry.audioPath = newDir.path + path.dropFirst(oldPrefix.count)
                 relinked += 1
             }
         }
@@ -249,18 +249,35 @@ final class HistoryStore {
         }
     }
 
-    private init() throws {
+    /// Creates `dir` (and any missing parents) owner-only, and tightens it to
+    /// 0700 if it already existed looser: history holds every dictation's
+    /// text and audio.
+    nonisolated static func createPrivateDirectory(_ dir: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+    }
+
+    /// Wraps an already-open container. Tests pass an in-memory one; the dirs
+    /// let them exercise the legacy audio-path relink without the real
+    /// Application Support tree.
+    init(container: ModelContainer, legacyDir: URL = HistoryStore.legacySupportDir, supportDir: URL = HistoryStore.supportDir) {
+        self.container = container
+        relinkAudioPaths(from: legacyDir, to: supportDir)
+    }
+
+    private convenience init() throws {
         Self.migrateLegacyDataIfNeeded()
-        try FileManager.default.createDirectory(at: Self.audioDir, withIntermediateDirectories: true)
+        try Self.createPrivateDirectory(Self.supportDir)
+        try Self.createPrivateDirectory(Self.audioDir)
         let storeURL = Self.supportDir.appendingPathComponent("history.store")
         let config = ModelConfiguration(url: storeURL)
         let schema = Schema(versionedSchema: DictationSchemaV1.self)
-        container = try ModelContainer(
+        self.init(container: try ModelContainer(
             for: schema,
             migrationPlan: DictationMigrationPlan.self,
             configurations: config
-        )
-        relinkAudioPaths()
+        ))
     }
 
     @discardableResult
@@ -336,7 +353,7 @@ final class HistoryStore {
 
     /// Naive retention: delete entries beyond the newest `maxEntries` (and
     /// their audio), and audio files older than `audioRetentionDays`.
-    func prune() {
+    func prune(now: Date = Date()) {
         let descriptor = FetchDescriptor<Dictation>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         guard let all = try? context.fetch(descriptor) else { return }
 
@@ -353,7 +370,7 @@ final class HistoryStore {
             Log.log("history: pruned \(all.count - Self.maxEntries) entries beyond cap of \(Self.maxEntries)")
         }
 
-        let cutoff = Date().addingTimeInterval(-Double(Self.audioRetentionDays) * 86_400)
+        let cutoff = now.addingTimeInterval(-Double(Self.audioRetentionDays) * 86_400)
         for entry in all.prefix(Self.maxEntries) where entry.createdAt < cutoff {
             if let path = entry.audioPath {
                 try? FileManager.default.removeItem(atPath: path)

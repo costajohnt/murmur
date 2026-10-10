@@ -56,6 +56,7 @@ struct OllamaClient {
         case badStatus(Int, body: String)
         case emptyResponse
         case notAReformat
+        case noModelInstalled
 
         var errorDescription: String? {
             switch self {
@@ -63,6 +64,7 @@ struct OllamaClient {
             case .badStatus(let code, let body): return "Ollama HTTP \(code): \(body.prefix(200))"
             case .emptyResponse: return "Ollama returned an empty message"
             case .notAReformat: return "Cleanup rewrote the dictation instead of formatting it; kept the original"
+            case .noModelInstalled: return "Ollama has no models installed. Run: ollama pull \(OllamaClient.fallbackModel)"
             }
         }
     }
@@ -122,19 +124,30 @@ struct OllamaClient {
     /// override set this is byte-identical to the pre-settings behavior.
     func resolveModel() async -> String {
         let installed = (try? await installedModels()) ?? []
-        if let override = AppSettings.cleanupModelOverride {
+        return Self.pickModel(
+            installed: installed,
+            override: AppSettings.cleanupModelOverride,
+            preferred: Self.preferredModel,
+            fallback: Self.fallbackModel
+        )
+    }
+
+    /// The decision behind `resolveModel`, with its inputs passed in so it is
+    /// testable. An empty `installed` means "couldn't verify" (unreachable
+    /// or no models), so the override or preferred model is returned as-is.
+    static func pickModel(installed: [String], override: String?, preferred: String, fallback: String) -> String {
+        if let override {
             if installed.contains(override) { return override }
             if installed.isEmpty { return override }
             Log.log("ollama: override \(override) not installed, using Auto")
         }
-        let preferred = Self.preferredModel
         guard !installed.isEmpty else { return preferred }
         if installed.contains(preferred) { return preferred }
-        if installed.contains(Self.fallbackModel) {
-            Log.log("ollama: preferred model \(preferred) not installed, falling back to \(Self.fallbackModel)")
-            return Self.fallbackModel
+        if installed.contains(fallback) {
+            Log.log("ollama: preferred model \(preferred) not installed, falling back to \(fallback)")
+            return fallback
         }
-        Log.log("ollama: neither \(preferred) nor \(Self.fallbackModel) installed, using first available: \(installed[0])")
+        Log.log("ollama: neither \(preferred) nor \(fallback) installed, using first available: \(installed[0])")
         return installed[0]
     }
 
@@ -180,6 +193,12 @@ struct OllamaClient {
             throw OllamaError.unreachable(underlying: error.localizedDescription)
         }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            // A 404 is "model not found". If Ollama answers /api/tags with an
+            // empty list, say so instead of a generic HTTP error; checked only
+            // on this failure path so a working setup pays no extra request.
+            if http.statusCode == 404, (try? await installedModels())?.isEmpty == true {
+                throw OllamaError.noModelInstalled
+            }
             throw OllamaError.badStatus(http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
         }
         let decoded = try JSONDecoder().decode(ChatResponse.self, from: data)
