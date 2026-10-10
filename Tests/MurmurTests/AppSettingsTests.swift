@@ -1,30 +1,45 @@
 import XCTest
 
-/// Covers CleanupMode: the three modes are distinct and correctly identified,
-/// and the unwritten-key default is always `.off`.
+/// Covers AppSettings against a throwaway UserDefaults suite (never the
+/// user's real .standard domain): unwritten-key defaults, the persisted raw
+/// strings, and stale-value migration.
 final class AppSettingsTests: XCTestCase {
-    func testCleanupModeHasThreeDistinctCases() {
-        XCTAssertEqual(CleanupMode.allCases.count, 3)
-        XCTAssertEqual(Set(CleanupMode.allCases.map(\.label)).count, 3)
-        XCTAssertEqual(Set(CleanupMode.allCases.map(\.summary)).count, 3)
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+    private var original: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = UUID().uuidString
+        defaults = UserDefaults(suiteName: suiteName)
+        original = AppSettings.defaults
+        AppSettings.defaults = defaults
     }
 
-    func testCleanupModeIdEqualsRawValue() {
-        for mode in CleanupMode.allCases {
-            XCTAssertEqual(mode.id, mode.rawValue)
-        }
+    override func tearDown() {
+        AppSettings.defaults = original
+        defaults.removePersistentDomain(forName: suiteName)
+        super.tearDown()
     }
 
-    func testCleanupModeRoundTripsThroughRawValue() {
-        for mode in CleanupMode.allCases {
-            XCTAssertEqual(CleanupMode(rawValue: mode.rawValue), mode)
-        }
+    /// The raw values are what's on disk (and what SettingsView's
+    /// @AppStorage writes). Renaming a case would silently orphan every
+    /// existing user's stored choice, so pin the strings.
+    func testPersistedRawValuesAreStable() {
+        XCTAssertEqual(CleanupMode.allCases.map(\.rawValue), ["off", "light", "full"])
+        XCTAssertEqual(TonePreset.allCases.map(\.rawValue), ["faithful", "polished", "casual"])
+    }
+
+    func testStoredRawStringsReadBack() {
+        defaults.set("light", forKey: AppSettings.cleanupModeKey)
+        defaults.set("casual", forKey: AppSettings.tonePresetKey)
+        XCTAssertEqual(AppSettings.cleanupMode, .light)
+        XCTAssertEqual(AppSettings.tonePreset, .casual)
     }
 
     /// With no stored key, the default is always `.off` so Murmur works out
     /// of the box without Ollama.
     func testUnwrittenDefaultIsOff() {
-        UserDefaults.standard.removeObject(forKey: AppSettings.cleanupModeKey)
         XCTAssertEqual(AppSettings.cleanupMode, .off)
     }
 
@@ -37,24 +52,22 @@ final class AppSettingsTests: XCTestCase {
     // segment.
 
     func testMigrationRemovesUnparseableTonePreset() {
-        UserDefaults.standard.set("removed_preset", forKey: AppSettings.tonePresetKey)
+        defaults.set("removed_preset", forKey: AppSettings.tonePresetKey)
         AppSettings.migrateStaleValues()
-        XCTAssertNil(UserDefaults.standard.string(forKey: AppSettings.tonePresetKey),
+        XCTAssertNil(defaults.string(forKey: AppSettings.tonePresetKey),
                      "a raw value that no longer parses must be removed, not left to confuse @AppStorage")
         XCTAssertEqual(AppSettings.tonePreset, .faithful)
     }
 
     func testMigrationKeepsValidTonePreset() {
-        UserDefaults.standard.set(TonePreset.casual.rawValue, forKey: AppSettings.tonePresetKey)
-        defer { UserDefaults.standard.removeObject(forKey: AppSettings.tonePresetKey) }
+        defaults.set(TonePreset.casual.rawValue, forKey: AppSettings.tonePresetKey)
         AppSettings.migrateStaleValues()
         XCTAssertEqual(AppSettings.tonePreset, .casual, "a valid stored choice must survive migration untouched")
     }
 
     func testMigrationIsANoOpWithNoStoredTonePreset() {
-        UserDefaults.standard.removeObject(forKey: AppSettings.tonePresetKey)
         AppSettings.migrateStaleValues()
-        XCTAssertNil(UserDefaults.standard.string(forKey: AppSettings.tonePresetKey))
+        XCTAssertNil(defaults.string(forKey: AppSettings.tonePresetKey))
         XCTAssertEqual(AppSettings.tonePreset, .faithful)
     }
 }

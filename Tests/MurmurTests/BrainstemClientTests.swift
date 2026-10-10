@@ -4,7 +4,7 @@ import XCTest
 /// network) and BrainstemClient.capture's request shape / success-failure
 /// mapping (stubbed via URLProtocol — never hits the live brainstem endpoint
 /// from tests).
-final class BrainstemClientTests: XCTestCase {
+final class BrainstemClientTests: StubbedNetworkTestCase {
 
     // MARK: - noteToSelfRemainder (pure routing logic)
 
@@ -76,9 +76,7 @@ final class BrainstemClientTests: XCTestCase {
     // MARK: - capture (network, stubbed)
 
     func testCaptureSendsPostWithJSONBodyToCaptureEndpoint() async throws {
-        var capturedRequest: URLRequest?
         StubURLProtocol.handler = { request in
-            capturedRequest = request
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, Data())
         }
@@ -86,7 +84,7 @@ final class BrainstemClientTests: XCTestCase {
         let client = BrainstemClient(baseURL: "http://brainstem.example/", session: stubbedURLSession())
         try await client.capture("buy milk")
 
-        let request = try XCTUnwrap(capturedRequest)
+        let request = try XCTUnwrap(StubURLProtocol.requests.last)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.absoluteString, "http://brainstem.example/capture")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
@@ -97,16 +95,14 @@ final class BrainstemClientTests: XCTestCase {
         XCTAssertEqual(decoded["text"], "buy milk")
     }
 
-    func testCaptureStripsNoTrailingSlashDuplication() async throws {
-        var capturedURL: URL?
+    func testCaptureAppendsEndpointToBaseWithoutTrailingSlash() async throws {
         StubURLProtocol.handler = { request in
-            capturedURL = request.url
             let response = HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!
             return (response, Data())
         }
         let client = BrainstemClient(baseURL: "http://brainstem.example", session: stubbedURLSession())
         try await client.capture("no trailing slash on base")
-        XCTAssertEqual(capturedURL?.absoluteString, "http://brainstem.example/capture")
+        XCTAssertEqual(StubURLProtocol.requests.last?.url?.absoluteString, "http://brainstem.example/capture")
     }
 
     func test2xxStatusesSucceed() async throws {
@@ -133,8 +129,12 @@ final class BrainstemClientTests: XCTestCase {
         do {
             try await client.capture("oversized text")
             XCTFail("expected an error for a 413 response")
-        } catch {
-            // expected
+        } catch let error as BrainstemClient.CaptureError {
+            guard case .badStatus(let code, let body) = error else {
+                return XCTFail("expected badStatus, got \(error)")
+            }
+            XCTAssertEqual(code, 413)
+            XCTAssertEqual(body, "too large")
         }
     }
 
@@ -146,8 +146,9 @@ final class BrainstemClientTests: XCTestCase {
         do {
             try await client.capture("text")
             XCTFail("expected an error when the network request fails")
-        } catch {
-            // expected
+        } catch let error as URLError {
+            // capture() does not wrap transport errors in CaptureError.
+            XCTAssertEqual(error.code, .notConnectedToInternet)
         }
     }
 }
