@@ -367,6 +367,11 @@ final class AudioRecorder {
         }
     }
 
+    /// The samples recorded so far, without stopping.
+    func snapshotSamples() -> [Float] {
+        lock.withLock { samples }
+    }
+
     /// Stops recording and returns the accumulated 16 kHz mono samples.
     @MainActor
     func stop() -> [Float] {

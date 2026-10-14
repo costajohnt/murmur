@@ -87,3 +87,32 @@ struct UtteranceSegmenter {
         return 20 * log10(max((sum / Float(chunk.count)).squareRoot(), 1e-7))
     }
 }
+
+/// Fires once each time speech is followed by `pause` of quiet, so a
+/// dictation can be checked for the send word when the speaker stops. Same
+/// energy rule as `UtteranceSegmenter`; the floor also creeps up during
+/// sound, so a loud room yields extra (harmless) checks rather than none.
+struct PauseDetector {
+    static let pause: TimeInterval = 0.6
+
+    private var noiseFloorDb: Float = -60
+    private var heardSpeech = false
+    private var quietSamples = 0
+
+    mutating func feed(_ chunk: [Float]) -> Bool {
+        guard !chunk.isEmpty else { return false }
+        let db = UtteranceSegmenter.rmsDb(chunk)
+        let isSpeech = db > max(noiseFloorDb + UtteranceSegmenter.speechMarginDb, UtteranceSegmenter.minSpeechDb)
+        noiseFloorDb += (isSpeech ? 0.01 : 0.05) * (db - noiseFloorDb)
+        if isSpeech {
+            heardSpeech = true
+            quietSamples = 0
+            return false
+        }
+        guard heardSpeech else { return false }
+        quietSamples += chunk.count
+        guard Double(quietSamples) >= Self.pause * UtteranceSegmenter.sampleRate else { return false }
+        heardSpeech = false
+        return true
+    }
+}

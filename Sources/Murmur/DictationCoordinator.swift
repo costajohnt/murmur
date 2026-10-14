@@ -35,6 +35,8 @@ final class DictationCoordinator {
     /// every dictation attempt while permission stays ungranted. The menubar
     /// "Setup…" item and first-run onboarding are unaffected.
     private var didAutoOpenOnboarding = false
+    /// A send-word check (transcribe-so-far on a pause) is running.
+    private var checkingSendWord = false
 
     private init() {}
 
@@ -95,6 +97,7 @@ final class DictationCoordinator {
         let samples = recorder.stop()
         recorder.onLevel = nil
         recorder.onAutoStop = nil
+        recorder.onChunk = nil
         pillState.resetLevels()
         recordStart = nil
         targetApp = nil
@@ -123,6 +126,12 @@ final class DictationCoordinator {
 
         // Live level → meter bars. Callback arrives on the audio thread;
         // hop to main for the @Published updates.
+        // Send word ends the dictation: on every pause, check whether what
+        // was said so far ends with it.
+        let sendWord = AppSettings.sendWord
+        recorder.onChunk = sendWord.isEmpty ? nil : Self.pauseHandler { [weak self] in
+            DispatchQueue.main.async { self?.checkForSendWord(sendWord) }
+        }
         recorder.onLevel = { [weak self] level in
             DispatchQueue.main.async {
                 self?.pillState.pushLevel(level)
@@ -179,11 +188,49 @@ final class DictationCoordinator {
         stopAndProcess()
     }
 
-    private func stopAndProcess() {
+    /// Runs on the audio thread, so built outside the main actor (see
+    /// `AudioRecorder.tapBlock`). Fresh detector per recording.
+    private nonisolated static func pauseHandler(onPause: @escaping () -> Void) -> ([Float]) -> Void {
+        var detector = PauseDetector()
+        return { chunk in
+            if detector.feed(chunk) { onPause() }
+        }
+    }
+
+    /// The user paused: if the recording so far ends with the send word,
+    /// stop right there (later audio, e.g. someone else talking, is
+    /// dropped) and process it, which pastes and presses Return.
+    ///
+    /// ponytail: re-transcribes the whole recording on each pause, ~0.2 s
+    /// per 30 s of audio on the ANE. Transcribe only the tail if very long
+    /// dictations make that noticeable.
+    private func checkForSendWord(_ sendWord: String) {
+        guard pillState.phase == .listening, !checkingSendWord,
+              pillState.asrModel == .ready else { return }
+        let samples = recorder.snapshotSamples()
+        guard samples.count > Int(AudioRecorder.sampleRate * 0.3) else { return }
+        checkingSendWord = true
+        let recording = recordStart
+        Task { @MainActor in
+            defer { checkingSendWord = false }
+            guard let asr = try? await ensureAsr(),
+                  let text = try? await Self.transcribe(samples, with: asr),
+                  pillState.phase == .listening, recordStart == recording,
+                  VoiceCommands.stripSendWord(from: text, sendWord: sendWord) != nil
+            else { return }
+            Log.log("send word heard: stopping at \(samples.count) samples")
+            stopAndProcess(keeping: samples.count)
+        }
+    }
+
+    /// `keeping`: process only the first N samples (the send word cut).
+    private func stopAndProcess(keeping: Int? = nil) {
         pillState.phase = .processing
-        let samples = recorder.stop()
+        let recorded = recorder.stop()
+        let samples = keeping.map { Array(recorded.prefix($0)) } ?? recorded
         recorder.onLevel = nil
         recorder.onAutoStop = nil
+        recorder.onChunk = nil
         pillState.resetLevels()
         let durationMs = recordStart.map { Int(Date().timeIntervalSince($0) * 1000) }
         recordStart = nil

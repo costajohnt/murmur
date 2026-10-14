@@ -72,6 +72,18 @@ final class UtteranceSegmenterTests: XCTestCase {
         XCTAssertEqual(feed(&s, amplitude: 0.006, seconds: 0.7).count, 1)
     }
 
+    func testPauseDetectorFiresOncePerPause() {
+        var d = PauseDetector()
+        func run(_ amplitude: Float, _ seconds: Double) -> Int {
+            (0..<Int(seconds * 16_000 / 512)).filter { _ in d.feed(Array(repeating: amplitude, count: 512)) }.count
+        }
+        XCTAssertEqual(run(0.0005, 1), 0, "no speech yet, no pause")
+        XCTAssertEqual(run(0.1, 1), 0)
+        XCTAssertEqual(run(0.0005, 2), 1, "one pause, fired once")
+        XCTAssertEqual(run(0.1, 0.5), 0)
+        XCTAssertEqual(run(0.0005, 1), 1)
+    }
+
     func testBlipIsDropped() {
         var s = UtteranceSegmenter()
         _ = feed(&s, amplitude: 0.0005, seconds: 1)
