@@ -272,8 +272,10 @@ final class DictationCoordinator {
                 try? FileManager.default.removeItem(atPath: audioPath)
             }
             if inject, outcome.delivery == .paste {
-                TextInjector.inject("", into: target, pressReturn: true) { ok, error in
-                    if !ok { Log.log("pipeline: Return-only inject failed: \(error ?? "?")") }
+                TextInjector.inject("", into: target, pressReturn: true) { [weak self] ok, error in
+                    Task { @MainActor in
+                        if !ok { self?.reportInjectFailure(error) }
+                    }
                 }
             }
             return
@@ -314,18 +316,7 @@ final class DictationCoordinator {
                         }
                         return
                     }
-                    if AXIsProcessTrusted() {
-                        AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
-                    } else {
-                        // The dominant paste failure: Accessibility never granted.
-                        // Surface it AND pop the setup guide so the user can fix it —
-                        // but only once per session (N2), not on every attempt.
-                        AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
-                        if self?.didAutoOpenOnboarding != true {
-                            self?.didAutoOpenOnboarding = true
-                            (NSApp.delegate as? AppDelegate)?.openOnboarding()
-                        }
-                    }
+                    self?.reportInjectFailure(error)
                 }
             }
         }
@@ -335,6 +326,21 @@ final class DictationCoordinator {
         // need HistoryStore's context predicate updated.
         persist(raw: raw, cleaned: outcome.text, model: outcome.model, status: outcome.status, audioPath: audioPath, durationMs: durationMs)
         Log.log("pipeline done: status = \(outcome.status.rawValue), history count = \(HistoryStore.shared?.count() ?? -1)")
+    }
+
+    private func reportInjectFailure(_ error: String?) {
+        if AXIsProcessTrusted() {
+            AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
+        } else {
+            // The dominant paste failure: Accessibility never granted.
+            // Surface it AND pop the setup guide so the user can fix it —
+            // but only once per session (N2), not on every attempt.
+            AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
+            if !didAutoOpenOnboarding {
+                didAutoOpenOnboarding = true
+                (NSApp.delegate as? AppDelegate)?.openOnboarding()
+            }
+        }
     }
 
     private func persist(raw: String = "", cleaned: String = "", model: String = "", status: DictationStatus, audioPath: String?, durationMs: Int?) {

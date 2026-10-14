@@ -63,6 +63,15 @@ final class UtteranceSegmenterTests: XCTestCase {
         XCTAssertEqual(feed(&s, amplitude: 0.0005, seconds: 0.7).count, 1)
     }
 
+    func testSustainedLoudRoomBecomesTheFloor() {
+        var s = UtteranceSegmenter()
+        // ~-44 dBFS steady noise from the first chunk, above the initial floor.
+        XCTAssertTrue(feed(&s, amplitude: 0.006, seconds: 6).isEmpty)
+        // A louder short phrase over that noise still comes out.
+        _ = feed(&s, amplitude: 0.1, seconds: 0.6)
+        XCTAssertEqual(feed(&s, amplitude: 0.006, seconds: 0.7).count, 1)
+    }
+
     func testBlipIsDropped() {
         var s = UtteranceSegmenter()
         _ = feed(&s, amplitude: 0.0005, seconds: 1)

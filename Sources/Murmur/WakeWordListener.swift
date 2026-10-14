@@ -15,6 +15,9 @@ final class WakeWordListener {
 
     private let recorder = AudioRecorder(accumulates: false)
     private var running = false
+    /// A `recorder.start()` is in flight. Starts are never overlapped on the
+    /// one recorder; a stale start re-syncs via `apply()` when it lands.
+    private var starting = false
     /// Paused by the coordinator while a dictation owns the mic.
     private var paused = false
     /// Bumped on every stop, so a start still awaiting the engine can tell it
@@ -44,8 +47,8 @@ final class WakeWordListener {
     }
 
     private func start() {
-        guard !running else { return }
-        running = true
+        guard !running, !starting else { return }
+        starting = true
         let myGeneration = generation
         recorder.onChunk = Self.chunkHandler { [weak self] utterance in
             Task { @MainActor in self?.heard(utterance) }
@@ -61,15 +64,22 @@ final class WakeWordListener {
         Task { @MainActor in
             do {
                 try await recorder.start(silenceAutoStop: 0)
+                starting = false
                 if generation != myGeneration {
-                    // pause()/stop() ran while the engine was starting.
+                    // pause()/stop() ran while the engine was starting: shut
+                    // it, then follow whatever is wanted now.
                     _ = recorder.stop()
+                    apply()
                     return
                 }
+                running = true
                 Log.log("wake: listening for \"\(AppSettings.wakePhrase)\"")
             } catch {
-                guard generation == myGeneration else { return }
-                running = false
+                starting = false
+                guard generation == myGeneration else {
+                    apply()
+                    return
+                }
                 Log.log("wake: could not open the mic: \(error.localizedDescription)")
                 AppStatus.shared.report("Wake word is off: \(error.localizedDescription)")
             }
@@ -78,10 +88,11 @@ final class WakeWordListener {
 
     private func stop() {
         generation += 1
-        guard running else { return }
-        running = false
         recorder.onChunk = nil
         recorder.onAutoStop = nil
+        // A start in flight sees the bumped generation and stops itself.
+        guard running else { return }
+        running = false
         _ = recorder.stop()
         Log.log("wake: stopped listening")
     }
@@ -102,6 +113,9 @@ final class WakeWordListener {
     private func heard(_ utterance: [Float]) {
         // One transcription at a time; anything said meanwhile is dropped.
         guard running, !transcribing else { return }
+        // Never trigger a model download or retry from room noise; wait for
+        // the launch preload (or a dictation) to have the model ready.
+        guard DictationCoordinator.shared.pillState.asrModel == .ready else { return }
         transcribing = true
         let phrase = AppSettings.wakePhrase
         Task { @MainActor in

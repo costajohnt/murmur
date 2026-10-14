@@ -56,6 +56,12 @@ struct UtteranceSegmenter {
         }
 
         if !overLong { utterance.append(contentsOf: chunk) }
+        if overLong {
+            // Sustained sound (fan, music, a room louder than the starting
+            // floor): let the floor climb to it, or the segmenter would stay
+            // "in speech" and deaf until the room went quiet.
+            noiseFloorDb += 0.05 * (db - noiseFloorDb)
+        }
         if isSpeech {
             speechSamples += chunk.count + silenceSamples
             silenceSamples = 0

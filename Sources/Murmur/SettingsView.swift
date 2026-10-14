@@ -346,7 +346,7 @@ struct SettingsView: View {
                 .autocorrectionDisabled()
             Text(sendWord.trimmingCharacters(in: .whitespaces).isEmpty
                 ? "Off — set a word to press Return after pasting when a dictation ends with it."
-                : "Ending a dictation with \"\(sendWord.trimmingCharacters(in: .whitespaces))\" pastes the rest and presses Return. Say it alone to just press Return.")
+                : "Ending a dictation with \"\(sendWord.trimmingCharacters(in: .whitespaces))\" pastes the rest and presses Return. Say it alone to just press Return. With the wake word on too, anything your mic hears (a video, a call on speakers) can submit text in the focused app, a terminal included.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
