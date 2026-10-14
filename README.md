@@ -29,8 +29,8 @@ Because ASR sits on the Neural Engine and the LLM (when cleanup is on) on the GP
 
 ## Hands-free (Settings > Hands-Free)
 
-- **Wake word** (off by default). While the pill is idle, Murmur keeps the mic open and listens for your phrase (default "hey murmur"). Say it, pause, then dictate; silence ends the dictation (3 s if Silence Auto-Stop is off). Detection runs Parakeet locally on short phrases only; longer speech is ignored without being transcribed, and nothing is stored or sent. The macOS mic indicator stays on while listening, and Bluetooth headsets switch to call-quality audio.
-- **Send word** (off until you set one, e.g. "send"). End a dictation with it and Murmur pastes the rest, then presses Return, which submits in a terminal or chat box. Say it on its own to just press Return. It is matched on the raw transcript as the last word(s), so pick a word you don't normally end sentences with.
+- **Wake word** (off by default). While the pill is idle, Murmur keeps the mic open and listens for your phrase (default "hey murmur"). Say it, wait for the chime (the mic is recording from then on), then dictate; silence or the send word ends the dictation (3 s of silence if Silence Auto-Stop is off). Detection runs Parakeet locally on short phrases only; longer speech is ignored without being transcribed, and nothing is stored or sent. The macOS mic indicator stays on while listening, and Bluetooth headsets switch to call-quality audio.
+- **Send word** (off until you set one, e.g. "send"). End a dictation with it and Murmur stops recording at your next pause, pastes the rest, then presses Return, which submits in a terminal or chat box. Say it on its own to just press Return. It is matched on the raw transcript as the last word(s), so pick a word you don't normally end sentences with.
 - **Wake word + send word together** means anything the mic hears, including a video or a call on your speakers, can dictate text and press Return in the focused app, which in a terminal runs it. Keep that combination for when you're the only audio source.
 
 ## Vault Capture

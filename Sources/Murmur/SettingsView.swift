@@ -337,7 +337,7 @@ struct SettingsView: View {
                 .autocorrectionDisabled()
                 .disabled(!wakeWordEnabled)
             Text(wakeWordEnabled
-                ? "Say \"\(wakePhrase.isEmpty ? AppSettings.defaultWakePhrase : wakePhrase)\", pause, then dictate. Silence ends it. The mic stays open while idle (orange dot), and Bluetooth headsets switch to call quality. Detection runs on this Mac."
+                ? "Say \"\(wakePhrase.isEmpty ? AppSettings.defaultWakePhrase : wakePhrase)\", wait for the chime, then dictate. Silence or the send word ends it. The mic stays open while idle (orange dot), and Bluetooth headsets switch to call quality. Detection runs on this Mac."
                 : "Off — dictation starts only from the pill or hotkey.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

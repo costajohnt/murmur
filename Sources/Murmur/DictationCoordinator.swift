@@ -61,9 +61,8 @@ final class DictationCoordinator {
     func wakeWordHeard() {
         guard pillState.phase == .idle, !isStarting else { return }
         Log.log("wake word: starting hands-free dictation")
-        NSSound(named: "Tink")?.play()
         let silence = AppSettings.silenceAutoStopSeconds
-        startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds)
+        startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds, chime: true)
     }
 
     /// Hands-free stop when the user turned silence auto-stop off.
@@ -108,7 +107,11 @@ final class DictationCoordinator {
 
     // MARK: - Phases
 
-    private func startListening(silenceAutoStop: TimeInterval? = nil) {
+    /// `chime`: play a cue once the mic is actually recording (hands-free
+    /// start), so it means "talk now". Opening the mic can take ~2 s
+    /// (Bluetooth, device bind); a cue at wake time had people talking
+    /// into that gap.
+    private func startListening(silenceAutoStop: TimeInterval? = nil, chime: Bool = false) {
         guard !isStarting else {
             Log.log("pipeline: click ignored (recording already starting)")
             return
@@ -153,6 +156,7 @@ final class DictationCoordinator {
                 recordStart = Date()
                 pillState.phase = .listening
                 Log.log("record start: engine running")
+                if chime { NSSound(named: "Tink")?.play() }
                 if stopWhenStarted {
                     stopWhenStarted = false
                     Log.log("push-to-talk: released while starting, stopping now")
