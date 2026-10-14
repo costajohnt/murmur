@@ -53,6 +53,20 @@ final class DictationCoordinator {
         }
     }
 
+    /// The wake listener heard the wake phrase: start a hands-free dictation.
+    /// Silence auto-stop always ends it, even with the setting off, since
+    /// there is no hand on the pill to stop it.
+    func wakeWordHeard() {
+        guard pillState.phase == .idle, !isStarting else { return }
+        Log.log("wake word: starting hands-free dictation")
+        NSSound(named: "Tink")?.play()
+        let silence = AppSettings.silenceAutoStopSeconds
+        startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds)
+    }
+
+    /// Hands-free stop when the user turned silence auto-stop off.
+    private static let handsFreeSilenceSeconds: TimeInterval = 3
+
     /// Push-to-talk key down: start only from idle (key repeat and a press
     /// during processing are ignored).
     func pushToTalkPressed() {
@@ -85,18 +99,22 @@ final class DictationCoordinator {
         recordStart = nil
         targetApp = nil
         pillState.phase = .idle
+        WakeWordListener.shared.resume()
         Log.log("record cancel: discarded \(samples.count) samples, nothing processed or persisted")
     }
 
     // MARK: - Phases
 
-    private func startListening() {
+    private func startListening(silenceAutoStop: TimeInterval? = nil) {
         guard !isStarting else {
             Log.log("pipeline: click ignored (recording already starting)")
             return
         }
         isStarting = true
         stopWhenStarted = false
+        // Release the mic before the dictation recorder binds it; the
+        // listener resumes when the pill is back to idle.
+        WakeWordListener.shared.pause()
 
         // Snapshot the injection target NOW (didActivate-tracked, never a
         // stale frontmost read at paste time — v0 lesson).
@@ -122,7 +140,7 @@ final class DictationCoordinator {
         Task { @MainActor in
             defer { isStarting = false }
             do {
-                try await recorder.start()
+                try await recorder.start(silenceAutoStop: silenceAutoStop)
                 recordStart = Date()
                 pillState.phase = .listening
                 Log.log("record start: engine running")
@@ -137,6 +155,7 @@ final class DictationCoordinator {
                 // to idle otherwise.
                 AppStatus.shared.report(error.localizedDescription)
                 pillState.phase = .idle
+                WakeWordListener.shared.resume()
             }
         }
     }
@@ -174,6 +193,7 @@ final class DictationCoordinator {
         Task { @MainActor in
             await process(samples: samples, durationMs: durationMs, target: target)
             pillState.phase = .idle
+            WakeWordListener.shared.resume()
         }
     }
 
@@ -200,9 +220,7 @@ final class DictationCoordinator {
         do {
             let asrStart = Date()
             let asr = try await ensureAsr(timeout: 120)
-            var decoderState = try TdtDecoderState()
-            let result = try await asr.transcribe(samples, decoderState: &decoderState)
-            raw = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            raw = try await Self.transcribe(samples, with: asr)
             // Transcript content is DEBUG-only: release builds must never
             // write the user's words to any log.
             #if DEBUG
@@ -248,6 +266,19 @@ final class DictationCoordinator {
             return
         }
 
+        if outcome.text.isEmpty, outcome.pressReturn {
+            // Send word alone: press Return, nothing worth a history entry.
+            if let audioPath {
+                try? FileManager.default.removeItem(atPath: audioPath)
+            }
+            if inject, outcome.delivery == .paste {
+                TextInjector.inject("", into: target, pressReturn: true) { ok, error in
+                    if !ok { Log.log("pipeline: Return-only inject failed: \(error ?? "?")") }
+                }
+            }
+            return
+        }
+
         if outcome.delivery == .captured {
             pillState.phase = .captured
             if outcome.clearsWarning {
@@ -272,7 +303,7 @@ final class DictationCoordinator {
         } else {
             Log.log("pipeline inject: target = \(target?.bundleIdentifier ?? "none")")
             let clearsWarning = outcome.clearsWarning
-            TextInjector.inject(outcome.text, into: target) { [weak self] ok, error in
+            TextInjector.inject(outcome.text, into: target, pressReturn: outcome.pressReturn) { [weak self] ok, error in
                 Task { @MainActor in
                     if ok {
                         // Only a fully clean run clears a prior warning: a
@@ -318,6 +349,13 @@ final class DictationCoordinator {
     }
 
     // MARK: - ASR
+
+    /// One Parakeet pass with a fresh decoder state, trimmed.
+    static func transcribe(_ samples: [Float], with asr: AsrManager) async throws -> String {
+        var decoderState = try TdtDecoderState()
+        let result = try await asr.transcribe(samples, decoderState: &decoderState)
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Lazy-loads Parakeet once and keeps it resident (ANE, ~66 MB).
     func ensureAsr() async throws -> AsrManager {
@@ -448,7 +486,8 @@ extension DictationPipeline {
                 return try await ollama.clean(text, model: model, context: context, tone: AppSettings.tonePreset)
             },
             capture: brainstemURL.isEmpty ? nil : { try await BrainstemClient(baseURL: brainstemURL).capture($0) },
-            report: { AppStatus.shared.report($0) }
+            report: { AppStatus.shared.report($0) },
+            sendWord: AppSettings.sendWord
         )
     }
 }

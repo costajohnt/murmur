@@ -23,6 +23,9 @@ struct DictationPipeline {
         /// A warning was reported this run (cleanup unavailable, vault
         /// capture failed). A successful paste must not clear it.
         var degraded: Bool
+        /// The dictation ended with the send word: press Return after the
+        /// paste. With empty `text` the send word was all that was said.
+        var pressReturn = false
 
         /// Only a fully clean run may clear a prior warning.
         var clearsWarning: Bool { status == .done && !degraded }
@@ -44,11 +47,31 @@ struct DictationPipeline {
     /// nil = vault capture is off (no brainstem URL configured).
     var capture: ((String) async throws -> Void)?
     var report: (String) -> Void
+    /// Empty = the send word is off.
+    var sendWord = ""
 
     /// nil means discard: no meaningful speech, so nothing is cleaned,
     /// injected or persisted. `targetGone` is checked after cleanup and
     /// capture, since the target can quit while those run.
     func run(raw: String, targetGone: () -> Bool) async -> Outcome? {
+        // Send word, decided on the RAW transcript for the same reason as
+        // note-to-self below: cleanup can rewrite or drop it. Only the text
+        // before it goes on.
+        var raw = raw
+        var pressReturn = false
+        if let rest = VoiceCommands.stripSendWord(from: raw, sendWord: sendWord) {
+            raw = rest
+            pressReturn = true
+            if !TranscriptGuard.isMeaningful(rest) {
+                // Only the send word was said: press Return, paste nothing.
+                Log.log("pipeline: send word alone, Return only")
+                return Outcome(
+                    text: "", status: .done, model: "raw",
+                    delivery: targetGone() ? .targetGone : .paste,
+                    degraded: false, pressReturn: true)
+            }
+        }
+
         // Near-silence guard: a trivially short transcript is mic noise, and
         // the cleanup model invents content for it (observed: ASR "S" →
         // "Sorry, I didn't catch that...").
@@ -72,7 +95,7 @@ struct DictationPipeline {
         }
         var outcome = Outcome(
             text: result.text, status: result.status, model: result.model,
-            delivery: .paste, degraded: result.unavailable)
+            delivery: .paste, degraded: result.unavailable, pressReturn: pressReturn)
 
         if remainder != nil, let capture {
             do {

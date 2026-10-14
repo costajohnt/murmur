@@ -96,6 +96,8 @@ targets:
       - path: Sources/Murmur/TextInjector.swift
       - path: Sources/Murmur/UpdateChecker.swift
       - path: Sources/Murmur/PillPlacement.swift
+      - path: Sources/Murmur/VoiceCommands.swift
+      - path: Sources/Murmur/UtteranceSegmenter.swift
       - path: Sources/Murmur/ObjCExceptionBridge.m
       - path: Sources/Murmur/ObjCExceptionBridge.h
     settings:

@@ -12,6 +12,10 @@ final class AudioRecorder {
     private let engine = AVAudioEngine()
     private var samples: [Float] = []
     private let lock = NSLock()
+    /// False for the wake-word listener: it consumes audio through `onChunk`
+    /// and runs for hours, so nothing accumulates and the length cap never
+    /// applies.
+    private let accumulates: Bool
 
     /// Guarded by `lock`. `.starting` is a distinct state because binding an
     /// input device itself posts a configuration-change notification — without
@@ -28,7 +32,8 @@ final class AudioRecorder {
     private static let startEchoWindow: TimeInterval = 1.0
     private var configurationObserver: NSObjectProtocol?
 
-    init() {
+    init(accumulates: Bool = true) {
+        self.accumulates = accumulates
         // AVAudioEngine posts this whenever the audio graph changes under it:
         // the default input switched, a device was unplugged, a Bluetooth mic
         // connected. Without reacting, a recording in progress keeps pulling
@@ -86,6 +91,14 @@ final class AudioRecorder {
         set { lock.lock(); defer { lock.unlock() }; _onAutoStop = newValue }
     }
     private var _onAutoStop: ((AutoStopReason) -> Void)?
+
+    /// Every converted 16 kHz chunk, on the audio thread. Same cross-thread
+    /// setup as `onLevel`; the consumer hops off the audio thread itself.
+    var onChunk: (([Float]) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onChunk }
+        set { lock.lock(); defer { lock.unlock() }; _onChunk = newValue }
+    }
+    private var _onChunk: (([Float]) -> Void)?
     /// `smoothedLevel` above and `recordStartTime`/`silenceStartTime`/
     /// `didFireAutoStop`/`silenceAutoStopDuration` below are written on the
     /// main actor in `start()` and read/written on the audio thread in
@@ -151,9 +164,11 @@ final class AudioRecorder {
 
     /// Requests mic permission if needed, then starts the engine tap.
     /// Main actor, like `stop()` and the configuration-change handler, so the
-    /// engine graph is only ever mutated from one place.
+    /// engine graph is only ever mutated from one place. `silenceAutoStop`
+    /// overrides `AppSettings.silenceAutoStopSeconds` for this recording
+    /// (0 = off).
     @MainActor
-    func start() async throws {
+    func start(silenceAutoStop: TimeInterval? = nil) async throws {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             break
@@ -169,7 +184,7 @@ final class AudioRecorder {
         var didStart = false
         defer { setRecordingState(didStart ? .recording : .idle) }
 
-        resetForNewRecording()
+        resetForNewRecording(silenceAutoStop: silenceAutoStop ?? AppSettings.silenceAutoStopSeconds)
 
         // A previous recording can leave the engine running (e.g. stop() ran
         // while the hardware was mid-reset, or a device change restarted it
@@ -238,7 +253,7 @@ final class AudioRecorder {
         didStart = true
     }
 
-    private func resetForNewRecording() {
+    private func resetForNewRecording(silenceAutoStop: TimeInterval) {
         lock.lock()
         defer { lock.unlock() }
         recordingState = .starting
@@ -247,7 +262,7 @@ final class AudioRecorder {
         recordStartTime = Date()
         silenceStartTime = nil
         didFireAutoStop = false
-        silenceAutoStopDuration = AppSettings.silenceAutoStopSeconds
+        silenceAutoStopDuration = silenceAutoStop
     }
 
     private func setRecordingState(_ state: RecordingState) {
@@ -402,9 +417,10 @@ final class AudioRecorder {
         }
         guard convError == nil, let channel = out.floatChannelData else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
-        let hitCap = lock.withLock {
+        let hitCap = accumulates && lock.withLock {
             Self.append(chunk, to: &samples, cap: Self.maxSamples, didFireAutoStop: &didFireAutoStop)
         }
+        onChunk?(chunk)
         updateLevel(chunk)
         if hitCap {
             Log.log("recorder: hit the \(Int(Self.maxRecordingSeconds / 60))-minute recording cap, stopping")

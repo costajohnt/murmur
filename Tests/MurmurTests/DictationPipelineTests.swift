@@ -14,7 +14,8 @@ final class DictationPipelineTests: XCTestCase {
     private func pipeline(
         mode: CleanupMode = .light,
         clean: @escaping (String) throws -> String = { "CLEAN(\($0))" },
-        capture: ((String) throws -> Void)? = nil
+        capture: ((String) throws -> Void)? = nil,
+        sendWord: String = ""
     ) -> DictationPipeline {
         DictationPipeline(
             mode: mode,
@@ -29,12 +30,34 @@ final class DictationPipelineTests: XCTestCase {
                     try capture(text)
                 }
             },
-            report: { [unowned self] in self.reports.append($0) }
+            report: { [unowned self] in self.reports.append($0) },
+            sendWord: sendWord
         )
     }
 
     private func run(_ p: DictationPipeline, _ raw: String, targetGone: Bool = false) async -> DictationPipeline.Outcome? {
         await p.run(raw: raw, targetGone: { targetGone })
+    }
+
+    func testSendWordIsStrippedBeforeCleanupAndPressesReturn() async {
+        let outcome = await run(pipeline(sendWord: "send"), "run the tests, send.")
+        XCTAssertEqual(cleanedInputs, ["run the tests"], "cleanup must never see the send word")
+        XCTAssertEqual(outcome?.text, "CLEAN(run the tests)")
+        XCTAssertEqual(outcome?.pressReturn, true)
+    }
+
+    func testSendWordAloneIsReturnOnly() async {
+        let outcome = await run(pipeline(sendWord: "send"), "Send.")
+        XCTAssertEqual(outcome?.text, "")
+        XCTAssertEqual(outcome?.pressReturn, true)
+        XCTAssertEqual(outcome?.delivery, .paste)
+        XCTAssertTrue(cleanedInputs.isEmpty)
+    }
+
+    func testSendWordOffLeavesTranscriptAlone() async {
+        let outcome = await run(pipeline(mode: .off), "run the tests, send.")
+        XCTAssertEqual(outcome?.text, "run the tests, send.")
+        XCTAssertEqual(outcome?.pressReturn, false)
     }
 
     func testNoiseIsDiscardedWithoutCleanup() async {
