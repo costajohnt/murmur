@@ -35,6 +35,8 @@ final class DictationCoordinator {
     /// every dictation attempt while permission stays ungranted. The menubar
     /// "Setup…" item and first-run onboarding are unaffected.
     private var didAutoOpenOnboarding = false
+    /// A send-word check (transcribe-so-far on a pause) is running.
+    private var checkingSendWord = false
 
     private init() {}
 
@@ -52,6 +54,19 @@ final class DictationCoordinator {
             Log.log("pipeline: click ignored (\(pillState.phase))")
         }
     }
+
+    /// The wake listener heard the wake phrase: start a hands-free dictation.
+    /// Silence auto-stop always ends it, even with the setting off, since
+    /// there is no hand on the pill to stop it.
+    func wakeWordHeard() {
+        guard pillState.phase == .idle, !isStarting else { return }
+        Log.log("wake word: starting hands-free dictation")
+        let silence = AppSettings.silenceAutoStopSeconds
+        startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds, chime: true)
+    }
+
+    /// Hands-free stop when the user turned silence auto-stop off.
+    private static let handsFreeSilenceSeconds: TimeInterval = 3
 
     /// Push-to-talk key down: start only from idle (key repeat and a press
     /// during processing are ignored).
@@ -81,22 +96,31 @@ final class DictationCoordinator {
         let samples = recorder.stop()
         recorder.onLevel = nil
         recorder.onAutoStop = nil
+        recorder.onChunk = nil
         pillState.resetLevels()
         recordStart = nil
         targetApp = nil
         pillState.phase = .idle
+        WakeWordListener.shared.resume()
         Log.log("record cancel: discarded \(samples.count) samples, nothing processed or persisted")
     }
 
     // MARK: - Phases
 
-    private func startListening() {
+    /// `chime`: play a cue once the mic is actually recording (hands-free
+    /// start), so it means "talk now". Opening the mic can take ~2 s
+    /// (Bluetooth, device bind); a cue at wake time had people talking
+    /// into that gap.
+    private func startListening(silenceAutoStop: TimeInterval? = nil, chime: Bool = false) {
         guard !isStarting else {
             Log.log("pipeline: click ignored (recording already starting)")
             return
         }
         isStarting = true
         stopWhenStarted = false
+        // Release the mic before the dictation recorder binds it; the
+        // listener resumes when the pill is back to idle.
+        WakeWordListener.shared.pause()
 
         // Snapshot the injection target NOW (didActivate-tracked, never a
         // stale frontmost read at paste time — v0 lesson).
@@ -105,6 +129,12 @@ final class DictationCoordinator {
 
         // Live level → meter bars. Callback arrives on the audio thread;
         // hop to main for the @Published updates.
+        // Send word ends the dictation: on every pause, check whether what
+        // was said so far ends with it.
+        let sendWord = AppSettings.sendWord
+        recorder.onChunk = sendWord.isEmpty ? nil : Self.pauseHandler { [weak self] in
+            DispatchQueue.main.async { self?.checkForSendWord(sendWord) }
+        }
         recorder.onLevel = { [weak self] level in
             DispatchQueue.main.async {
                 self?.pillState.pushLevel(level)
@@ -122,10 +152,11 @@ final class DictationCoordinator {
         Task { @MainActor in
             defer { isStarting = false }
             do {
-                try await recorder.start()
+                try await recorder.start(silenceAutoStop: silenceAutoStop)
                 recordStart = Date()
                 pillState.phase = .listening
                 Log.log("record start: engine running")
+                if chime { NSSound(named: "Tink")?.play() }
                 if stopWhenStarted {
                     stopWhenStarted = false
                     Log.log("push-to-talk: released while starting, stopping now")
@@ -137,6 +168,7 @@ final class DictationCoordinator {
                 // to idle otherwise.
                 AppStatus.shared.report(error.localizedDescription)
                 pillState.phase = .idle
+                WakeWordListener.shared.resume()
             }
         }
     }
@@ -160,11 +192,49 @@ final class DictationCoordinator {
         stopAndProcess()
     }
 
-    private func stopAndProcess() {
+    /// Runs on the audio thread, so built outside the main actor (see
+    /// `AudioRecorder.tapBlock`). Fresh detector per recording.
+    private nonisolated static func pauseHandler(onPause: @escaping () -> Void) -> ([Float]) -> Void {
+        var detector = PauseDetector()
+        return { chunk in
+            if detector.feed(chunk) { onPause() }
+        }
+    }
+
+    /// The user paused: if the recording so far ends with the send word,
+    /// stop right there (later audio, e.g. someone else talking, is
+    /// dropped) and process it, which pastes and presses Return.
+    ///
+    /// ponytail: re-transcribes the whole recording on each pause, ~0.2 s
+    /// per 30 s of audio on the ANE. Transcribe only the tail if very long
+    /// dictations make that noticeable.
+    private func checkForSendWord(_ sendWord: String) {
+        guard pillState.phase == .listening, !checkingSendWord,
+              pillState.asrModel == .ready else { return }
+        let samples = recorder.snapshotSamples()
+        guard samples.count > Int(AudioRecorder.sampleRate * 0.3) else { return }
+        checkingSendWord = true
+        let recording = recordStart
+        Task { @MainActor in
+            defer { checkingSendWord = false }
+            guard let asr = try? await ensureAsr(),
+                  let text = try? await Self.transcribe(samples, with: asr),
+                  pillState.phase == .listening, recordStart == recording,
+                  VoiceCommands.stripSendWord(from: text, sendWord: sendWord) != nil
+            else { return }
+            Log.log("send word heard: stopping at \(samples.count) samples")
+            stopAndProcess(keeping: samples.count)
+        }
+    }
+
+    /// `keeping`: process only the first N samples (the send word cut).
+    private func stopAndProcess(keeping: Int? = nil) {
         pillState.phase = .processing
-        let samples = recorder.stop()
+        let recorded = recorder.stop()
+        let samples = keeping.map { Array(recorded.prefix($0)) } ?? recorded
         recorder.onLevel = nil
         recorder.onAutoStop = nil
+        recorder.onChunk = nil
         pillState.resetLevels()
         let durationMs = recordStart.map { Int(Date().timeIntervalSince($0) * 1000) }
         recordStart = nil
@@ -174,6 +244,7 @@ final class DictationCoordinator {
         Task { @MainActor in
             await process(samples: samples, durationMs: durationMs, target: target)
             pillState.phase = .idle
+            WakeWordListener.shared.resume()
         }
     }
 
@@ -200,9 +271,7 @@ final class DictationCoordinator {
         do {
             let asrStart = Date()
             let asr = try await ensureAsr(timeout: 120)
-            var decoderState = try TdtDecoderState()
-            let result = try await asr.transcribe(samples, decoderState: &decoderState)
-            raw = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            raw = try await Self.transcribe(samples, with: asr)
             // Transcript content is DEBUG-only: release builds must never
             // write the user's words to any log.
             #if DEBUG
@@ -248,6 +317,21 @@ final class DictationCoordinator {
             return
         }
 
+        if outcome.text.isEmpty, outcome.pressReturn {
+            // Send word alone: press Return, nothing worth a history entry.
+            if let audioPath {
+                try? FileManager.default.removeItem(atPath: audioPath)
+            }
+            if inject, outcome.delivery == .paste {
+                TextInjector.inject("", into: target, pressReturn: true) { [weak self] ok, error in
+                    Task { @MainActor in
+                        if !ok { self?.reportInjectFailure(error) }
+                    }
+                }
+            }
+            return
+        }
+
         if outcome.delivery == .captured {
             pillState.phase = .captured
             if outcome.clearsWarning {
@@ -272,7 +356,7 @@ final class DictationCoordinator {
         } else {
             Log.log("pipeline inject: target = \(target?.bundleIdentifier ?? "none")")
             let clearsWarning = outcome.clearsWarning
-            TextInjector.inject(outcome.text, into: target) { [weak self] ok, error in
+            TextInjector.inject(outcome.text, into: target, pressReturn: outcome.pressReturn) { [weak self] ok, error in
                 Task { @MainActor in
                     if ok {
                         // Only a fully clean run clears a prior warning: a
@@ -283,18 +367,7 @@ final class DictationCoordinator {
                         }
                         return
                     }
-                    if AXIsProcessTrusted() {
-                        AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
-                    } else {
-                        // The dominant paste failure: Accessibility never granted.
-                        // Surface it AND pop the setup guide so the user can fix it —
-                        // but only once per session (N2), not on every attempt.
-                        AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
-                        if self?.didAutoOpenOnboarding != true {
-                            self?.didAutoOpenOnboarding = true
-                            (NSApp.delegate as? AppDelegate)?.openOnboarding()
-                        }
-                    }
+                    self?.reportInjectFailure(error)
                 }
             }
         }
@@ -304,6 +377,21 @@ final class DictationCoordinator {
         // need HistoryStore's context predicate updated.
         persist(raw: raw, cleaned: outcome.text, model: outcome.model, status: outcome.status, audioPath: audioPath, durationMs: durationMs)
         Log.log("pipeline done: status = \(outcome.status.rawValue), history count = \(HistoryStore.shared?.count() ?? -1)")
+    }
+
+    private func reportInjectFailure(_ error: String?) {
+        if AXIsProcessTrusted() {
+            AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
+        } else {
+            // The dominant paste failure: Accessibility never granted.
+            // Surface it AND pop the setup guide so the user can fix it —
+            // but only once per session (N2), not on every attempt.
+            AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
+            if !didAutoOpenOnboarding {
+                didAutoOpenOnboarding = true
+                (NSApp.delegate as? AppDelegate)?.openOnboarding()
+            }
+        }
     }
 
     private func persist(raw: String = "", cleaned: String = "", model: String = "", status: DictationStatus, audioPath: String?, durationMs: Int?) {
@@ -318,6 +406,13 @@ final class DictationCoordinator {
     }
 
     // MARK: - ASR
+
+    /// One Parakeet pass with a fresh decoder state, trimmed.
+    static func transcribe(_ samples: [Float], with asr: AsrManager) async throws -> String {
+        var decoderState = try TdtDecoderState()
+        let result = try await asr.transcribe(samples, decoderState: &decoderState)
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Lazy-loads Parakeet once and keeps it resident (ANE, ~66 MB).
     func ensureAsr() async throws -> AsrManager {
@@ -448,7 +543,8 @@ extension DictationPipeline {
                 return try await ollama.clean(text, model: model, context: context, tone: AppSettings.tonePreset)
             },
             capture: brainstemURL.isEmpty ? nil : { try await BrainstemClient(baseURL: brainstemURL).capture($0) },
-            report: { AppStatus.shared.report($0) }
+            report: { AppStatus.shared.report($0) },
+            sendWord: AppSettings.sendWord
         )
     }
 }

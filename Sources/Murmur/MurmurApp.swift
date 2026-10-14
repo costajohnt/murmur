@@ -133,6 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // No-op unless the user enabled the hotkey in Settings (default off).
         HotkeyManager.shared.apply()
+        // No-op unless the user turned on the wake word (default off).
+        WakeWordListener.shared.apply()
         // No-op unless the user opted in to the daily update check.
         UpdateChecker.shared.start()
         // Regular app now: opening the app shows the History window as the

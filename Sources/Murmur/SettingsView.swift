@@ -20,6 +20,9 @@ struct SettingsView: View {
     @AppStorage(AppSettings.preferredInputDeviceUIDKey) private var inputDeviceUID = ""
     @AppStorage(AppSettings.pushToTalkKey) private var pushToTalk = false
     @AppStorage(AppSettings.checkForUpdatesKey) private var checkForUpdates = false
+    @AppStorage(AppSettings.wakeWordEnabledKey) private var wakeWordEnabled = false
+    @AppStorage(AppSettings.wakePhraseKey) private var wakePhrase = AppSettings.defaultWakePhrase
+    @AppStorage(AppSettings.sendWordKey) private var sendWord = ""
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
@@ -46,6 +49,7 @@ struct SettingsView: View {
             microphoneSection
             hotkeySection
             silenceSection
+            handsFreeSection
             vaultCaptureSection
             loginSection
         }
@@ -58,6 +62,7 @@ struct SettingsView: View {
         }
         .onChange(of: hotkeyEnabled) { HotkeyManager.shared.apply() }
         .onChange(of: hotkeyBindingRaw) { HotkeyManager.shared.apply() }
+        .onChange(of: wakeWordEnabled) { WakeWordListener.shared.apply() }
         .onChange(of: launchAtLogin) { syncLoginItem() }
         .onChange(of: checkForUpdates) { UpdateChecker.shared.checkIfDue() }
         .onChange(of: modelOverride) { updateResolvedModel() }
@@ -320,6 +325,31 @@ struct SettingsView: View {
         silenceAutoStopSeconds <= 0
             ? "Off — recordings only stop when you tap the pill."
             : String(format: "Stops automatically after %.1fs of silence.", silenceAutoStopSeconds)
+    }
+
+    // MARK: - Hands-free
+
+    private var handsFreeSection: some View {
+        Section("Hands-Free") {
+            Toggle("Listen for wake word", isOn: $wakeWordEnabled)
+            TextField("Wake word", text: $wakePhrase, prompt: Text(AppSettings.defaultWakePhrase))
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                .disabled(!wakeWordEnabled)
+            Text(wakeWordEnabled
+                ? "Say \"\(wakePhrase.isEmpty ? AppSettings.defaultWakePhrase : wakePhrase)\", wait for the chime, then dictate. Silence or the send word ends it. The mic stays open while idle (orange dot), and Bluetooth headsets switch to call quality. Detection runs on this Mac."
+                : "Off — dictation starts only from the pill or hotkey.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField("Send word", text: $sendWord, prompt: Text("send"))
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Text(sendWord.trimmingCharacters(in: .whitespaces).isEmpty
+                ? "Off — set a word to press Return after pasting when a dictation ends with it."
+                : "Ending a dictation with \"\(sendWord.trimmingCharacters(in: .whitespaces))\" pastes the rest and presses Return. Say it alone to just press Return. With the wake word on too, anything your mic hears (a video, a call on speakers) can submit text in the focused app, a terminal included.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Vault capture

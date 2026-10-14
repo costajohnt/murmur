@@ -19,6 +19,9 @@ enum TextInjector {
     /// first). 1.5 s rather than 1.0 s: an app that was just activated can be
     /// slow to process ⌘V, and restoring early would paste the old clipboard.
     private static let restoreDelay: TimeInterval = 1.5
+    /// Delay between ⌘V and the send word's Return, so an app that handles
+    /// paste asynchronously (Electron, some terminals) inserts the text first.
+    private static let returnDelay: TimeInterval = 0.15
 
     /// nspasteboard.org markers. Transient: clipboard managers should not
     /// record this content. Concealed: it is sensitive, don't display it.
@@ -32,10 +35,13 @@ enum TextInjector {
     private static var isInjecting = false
 
     /// Injects `text` at the cursor. If `target` is provided and not active,
-    /// activates it first. Returns via `completion` on the main queue.
+    /// activates it first. `pressReturn` (the send word) presses Return after
+    /// the paste; with empty `text` it presses only Return. Returns via
+    /// `completion` on the main queue.
     static func inject(
         _ text: String,
         into target: NSRunningApplication? = nil,
+        pressReturn: Bool = false,
         completion: ((_ ok: Bool, _ error: String?) -> Void)? = nil
     ) {
         guard AXIsProcessTrusted() else {
@@ -63,10 +69,10 @@ enum TextInjector {
         if let target, !target.isActive {
             target.activate(options: [])
             DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
-                pasteWhenActive(text, target: target, attemptsLeft: activationPollAttempts, completion: completion)
+                pasteWhenActive(text, target: target, pressReturn: pressReturn, attemptsLeft: activationPollAttempts, completion: completion)
             }
         } else {
-            performPaste(text, completion: completion)
+            performPaste(text, pressReturn: pressReturn, completion: completion)
         }
     }
 
@@ -75,6 +81,7 @@ enum TextInjector {
     private static func pasteWhenActive(
         _ text: String,
         target: NSRunningApplication,
+        pressReturn: Bool,
         attemptsLeft: Int,
         completion: ((Bool, String?) -> Void)?
     ) {
@@ -86,7 +93,7 @@ enum TextInjector {
             return
         }
         if target.isActive {
-            performPaste(text, completion: completion)
+            performPaste(text, pressReturn: pressReturn, completion: completion)
             return
         }
         guard attemptsLeft > 0 else {
@@ -96,11 +103,19 @@ enum TextInjector {
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + activationPollInterval) {
-            pasteWhenActive(text, target: target, attemptsLeft: attemptsLeft - 1, completion: completion)
+            pasteWhenActive(text, target: target, pressReturn: pressReturn, attemptsLeft: attemptsLeft - 1, completion: completion)
         }
     }
 
-    private static func performPaste(_ text: String, completion: ((Bool, String?) -> Void)?) {
+    private static func performPaste(_ text: String, pressReturn: Bool, completion: ((Bool, String?) -> Void)?) {
+        // Send word said on its own: nothing to paste, leave the clipboard alone.
+        if text.isEmpty {
+            let ok = pressReturn && postKey(returnKey)
+            isInjecting = false
+            completion?(ok, ok ? nil : "could not create CGEvents")
+            return
+        }
+
         let pasteboard = NSPasteboard.general
         let saved = snapshot(pasteboard)
 
@@ -110,11 +125,16 @@ enum TextInjector {
         // (a user copy, another app) wrote in the meantime (A2).
         let ourChangeCount = pasteboard.changeCount
 
-        guard synthesizeCmdV() else {
+        guard postKey(vKey, flags: .maskCommand) else {
             restore(pasteboard, items: saved)
             isInjecting = false
             completion?(false, "could not create CGEvents")
             return
+        }
+        if pressReturn {
+            DispatchQueue.main.asyncAfter(deadline: .now() + returnDelay) {
+                if !postKey(returnKey) { Log.log("inject: could not post Return after paste") }
+            }
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
@@ -181,18 +201,20 @@ enum TextInjector {
         pasteboard.writeObjects(restored)
     }
 
-    // MARK: - ⌘V synthesis
+    // MARK: - Key synthesis
 
-    private static func synthesizeCmdV() -> Bool {
-        let vKey: CGKeyCode = 9 // kVK_ANSI_V
+    private static let vKey: CGKeyCode = 9 // kVK_ANSI_V
+    private static let returnKey: CGKeyCode = 36 // kVK_Return
+
+    private static func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) -> Bool {
         guard let source = CGEventSource(stateID: .combinedSessionState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
         else {
             return false
         }
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        keyDown.flags = flags
+        keyUp.flags = flags
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
         return true

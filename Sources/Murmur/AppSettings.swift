@@ -133,6 +133,9 @@ enum AppSettings {
     static let pushToTalkKey = "pushToTalk"
     static let checkForUpdatesKey = "checkForUpdates"
     static let lastUpdateCheckKey = "lastUpdateCheck"
+    static let sendWordKey = "sendWord"
+    static let wakeWordEnabledKey = "wakeWordEnabled"
+    static let wakePhraseKey = "wakePhrase"
 
     /// Every read/write in this type goes through here. Tests swap in a
     /// throwaway suite so they never touch the user's real preferences.
@@ -227,6 +230,27 @@ enum AppSettings {
     /// is entirely off: dictations paste like normal, prefix included.
     static var brainstemURL: String {
         defaults.string(forKey: brainstemURLKey) ?? ""
+    }
+
+    /// Word(s) that, said at the end of a dictation, press Return after the
+    /// paste (e.g. "send" to submit in a terminal or chat box). Empty (the
+    /// unwritten-key default) = off.
+    static var sendWord: String {
+        (defaults.string(forKey: sendWordKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Hands-free: keep the mic open while idle and start dictating when the
+    /// wake phrase is heard. Off by default (always-on mic).
+    static var wakeWordEnabled: Bool {
+        defaults.bool(forKey: wakeWordEnabledKey)
+    }
+
+    /// SettingsView's @AppStorage default must match this.
+    static let defaultWakePhrase = "hey murmur"
+
+    static var wakePhrase: String {
+        let value = (defaults.string(forKey: wakePhraseKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? defaultWakePhrase : value
     }
 
     /// Persistent UID of the CoreAudio input device Murmur should record from.
