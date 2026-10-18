@@ -22,7 +22,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.checkForUpdatesKey) private var checkForUpdates = false
     @AppStorage(AppSettings.wakeWordEnabledKey) private var wakeWordEnabled = false
     @AppStorage(AppSettings.wakePhraseKey) private var wakePhrase = AppSettings.defaultWakePhrase
-    @AppStorage(AppSettings.sendWordKey) private var sendWord = ""
+    @AppStorage(AppSettings.sendWordKey) private var sendWord = AppSettings.defaultSendWord
 
     /// nil = tags not fetched yet or Ollama unreachable.
     @State private var installedModels: [String]?
@@ -344,6 +344,7 @@ struct SettingsView: View {
             TextField("Send word", text: $sendWord, prompt: Text("send"))
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
+                .help("The send word is captured at the start of each dictation; changes take effect on the next recording.")
             Text(sendWord.trimmingCharacters(in: .whitespaces).isEmpty
                 ? "Off — set a word to press Return after pasting when a dictation ends with it."
                 : "Ending a dictation with \"\(sendWord.trimmingCharacters(in: .whitespaces))\" pastes the rest and presses Return. Say it alone to just press Return. With the wake word on too, anything your mic hears (a video, a call on speakers) can submit text in the focused app, a terminal included.")

@@ -232,11 +232,16 @@ enum AppSettings {
         defaults.string(forKey: brainstemURLKey) ?? ""
     }
 
+    /// SettingsView's @AppStorage default must match this exactly — it reads
+    /// the same key as its own storage, independent of this getter.
+    static let defaultSendWord = "send"
+
     /// Word(s) that, said at the end of a dictation, press Return after the
-    /// paste (e.g. "send" to submit in a terminal or chat box). Empty (the
-    /// unwritten-key default) = off.
+    /// paste (e.g. "send" to submit in a terminal or chat box). Defaults to
+    /// "send" on a fresh install (unwritten key). An explicit empty value
+    /// stored by the user keeps it off.
     static var sendWord: String {
-        (defaults.string(forKey: sendWordKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        (defaults.string(forKey: sendWordKey) ?? defaultSendWord).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Hands-free: keep the mic open while idle and start dictating when the
