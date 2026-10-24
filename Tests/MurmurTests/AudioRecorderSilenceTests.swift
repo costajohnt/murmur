@@ -50,47 +50,86 @@ final class AudioRecorderNoiseFloorTests: XCTestCase {
     /// Same dB -> 0..1 mapping as the recorder's level meter.
     private func level(_ db: Float) -> Float { (db + 50) / 40 }
 
-    private func track(_ level: Float, _ floor: AudioRecorder.NoiseFloor?, _ elapsed: TimeInterval)
-        -> AudioRecorder.NoiseFloor {
-        AudioRecorder.trackNoiseFloor(level: level, floor: floor, elapsed: elapsed)
+    private func track(_ level: Float, _ floor: Float?, _ elapsed: TimeInterval, dropout: Bool = false) -> Float {
+        AudioRecorder.trackNoiseFloor(level: level, floor: floor, elapsed: elapsed, dropout: dropout)
     }
 
-    func testFloorFollowsASustainedLowerLevelAfterTheHold() {
-        var floor = AudioRecorder.NoiseFloor(level: 0.3)
-        for _ in 0..<29 { floor = track(0.1, floor, 0.033) }
-        XCTAssertEqual(floor.level, 0.3, "under the 1 s hold: not yet")
-        for _ in 0..<2 { floor = track(0.1, floor, 0.033) }
-        XCTAssertEqual(floor.level, 0.1, "past the hold the floor drops to the quieter level")
+    /// The recorder's path for one chunk: raw dB -> meter level -> smoothing
+    /// -> floor. A dB of nil is digital silence (a muted mic, a Bluetooth
+    /// profile switch).
+    private struct Meter {
+        var smoothed: Float = 0
+        var floor: Float?
+        mutating func feed(_ db: Float?, _ elapsed: TimeInterval = 0.033) {
+            let raw = db.map { min(max(($0 + 50) / 40, 0), 1) } ?? 0
+            smoothed = AudioRecorder.smoothedLevel(raw, from: smoothed)
+            floor = AudioRecorder.trackNoiseFloor(level: smoothed, floor: floor, elapsed: elapsed, dropout: db == nil)
+        }
+        var threshold: Float { AudioRecorder.silenceThreshold(noiseFloor: floor!) }
     }
 
-    /// A mic mute, a Bluetooth handoff or a hand over the mic drives the level
-    /// to the bottom of the meter for well under a second. That must not
-    /// erase the floor, or the room tone after it reads as speech until the
-    /// floor climbs back at 1 dB/s.
-    func testSubSecondDropoutLeavesTheFloorAlone() {
-        let room = level(-34)
-        var floor = AudioRecorder.NoiseFloor(level: room)
-        for _ in 0..<27 { floor = track(0, floor, 0.033) }  // ~0.9 s of nothing
-        XCTAssertEqual(floor.level, room)
-        floor = track(room, floor, 0.033)
-        for _ in 0..<27 { floor = track(0, floor, 0.033) }  // a second dropout right after
-        XCTAssertEqual(floor.level, room, "the hold restarts once the level is back")
+    /// -15 dBFS speech with a 300 ms pause every 2 s in a -50 dBFS room.
+    private func dictation(_ t: TimeInterval) -> Float {
+        t.truncatingRemainder(dividingBy: 2) < 1.7 ? -15 : -50
+    }
+
+    /// Pauses between phrases are well under a second. They have to keep
+    /// pulling the floor back to the room, or it climbs to the cap during
+    /// speech and the cutoff rises from about -37 to -24 dBFS mid-sentence.
+    func testDictationPausesKeepTheFloorNearTheRoom() {
+        var meter = Meter()
+        for _ in 0..<30 { meter.feed(-50) }  // 1 s of room before speaking
+        for i in 0..<900 {  // 30 s of dictation
+            meter.feed(dictation(Double(i) * 0.033))
+            XCTAssertLessThan(meter.threshold, level(-30), "at \(Double(i) * 0.033) s")
+        }
+    }
+
+    /// Talking from the first chunk (push-to-talk, wake word after the chime)
+    /// seeds the floor at speech level; the pauses must still bring it down.
+    func testFloorComesDownFromASpeechSeed() {
+        var meter = Meter()
+        for i in 0..<900 {
+            let t = Double(i) * 0.033
+            meter.feed(dictation(t))
+            if t >= 8 { XCTAssertLessThan(meter.threshold, level(-30), "at \(t) s") }
+        }
+    }
+
+    /// A mic mute or a Bluetooth handoff is digital silence, of any length.
+    /// It must not erase the floor, or the room tone after it reads as speech
+    /// until the floor climbs back at 1 dB/s.
+    func testDigitalSilenceDropoutLeavesTheFloorAlone() {
+        for dropout in [0.9, 1.2, 5.0] {
+            let room = level(-34)
+            var meter = Meter(smoothed: room, floor: room)
+            for _ in 0..<Int(dropout / 0.033) { meter.feed(nil) }
+            XCTAssertEqual(meter.floor!, room, "\(dropout) s dropout")
+            for _ in 0..<60 {
+                meter.feed(-34)
+                XCTAssertGreaterThan(meter.floor!, room - 3 / 40, "recovering from a \(dropout) s dropout")
+            }
+        }
+    }
+
+    func testFloorDropsAtMostTheDropRate() {
+        XCTAssertEqual(track(0, 0.5, 0.1), 0.5 - AudioRecorder.noiseFloorDropPerSecond * 0.1, accuracy: 1e-6)
+        XCTAssertEqual(track(0.45, 0.5, 1), 0.45, "never below the level itself")
     }
 
     func testFloorRisesOnlySlowly() {
-        let floor = track(0.9, AudioRecorder.NoiseFloor(level: 0.2), 1.0)
-        XCTAssertEqual(floor.level, 0.2 + AudioRecorder.noiseFloorRisePerSecond, accuracy: 1e-6,
+        let floor = track(0.9, 0.2, 1.0)
+        XCTAssertEqual(floor, 0.2 + AudioRecorder.noiseFloorRisePerSecond, accuracy: 1e-6,
                        "one second of speech lifts the floor by the rise rate, not to the speech level")
     }
 
     func testFirstLevelSeedsTheFloor() {
-        XCTAssertEqual(track(0.4, nil, 0.033).level, 0.4)
+        XCTAssertEqual(track(0.4, nil, 0.033), 0.4)
     }
 
     func testFloorIsCapped() {
-        XCTAssertEqual(track(1, nil, 0.033).level, AudioRecorder.maxNoiseFloor)
-        XCTAssertEqual(track(1, AudioRecorder.NoiseFloor(level: AudioRecorder.maxNoiseFloor), 60).level,
-                       AudioRecorder.maxNoiseFloor)
+        XCTAssertEqual(track(1, nil, 0.033), AudioRecorder.maxNoiseFloor)
+        XCTAssertEqual(track(1, AudioRecorder.maxNoiseFloor, 60), AudioRecorder.maxNoiseFloor)
     }
 
     /// At the cap, silence must still sit well under speech: at least 6 dB
@@ -123,7 +162,7 @@ final class AudioRecorderNoiseFloorTests: XCTestCase {
         let t0 = Date(timeIntervalSinceReferenceDate: 0)
         let chunk: TimeInterval = 0.1
         let jitter: [Float] = [-2.5, 1.5, -1, 2.5, 0, -2, 1, 2, -1.5, 0.5]
-        var floor: AudioRecorder.NoiseFloor?
+        var floor: Float?
         var adaptive: (fire: Bool, silenceStart: Date?) = (false, nil)
         var fixed: (fire: Bool, silenceStart: Date?) = (false, nil)
         var firedAt: TimeInterval?
@@ -136,7 +175,7 @@ final class AudioRecorderNoiseFloorTests: XCTestCase {
             let now = t0.addingTimeInterval(t)
             adaptive = AudioRecorder.silenceStep(level: lvl, now: now, recordStart: t0,
                                                  silenceStart: adaptive.silenceStart, duration: 10,
-                                                 threshold: AudioRecorder.silenceThreshold(noiseFloor: floor!.level))
+                                                 threshold: AudioRecorder.silenceThreshold(noiseFloor: floor!))
             if adaptive.fire, firedAt == nil { firedAt = t }
             fixed = AudioRecorder.silenceStep(level: lvl, now: now, recordStart: t0,
                                               silenceStart: fixed.silenceStart, duration: 10,
