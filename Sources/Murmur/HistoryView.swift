@@ -157,7 +157,7 @@ private struct TranscriptRow: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Copy")
+                    .help("Copy (stays on this Mac: not sent to Universal Clipboard or clipboard managers)")
 
                     Menu {
                         Button("Insert at cursor") { insert() }
