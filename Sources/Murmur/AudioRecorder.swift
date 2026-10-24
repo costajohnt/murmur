@@ -21,8 +21,12 @@ final class AudioRecorder {
     /// input device itself posts a configuration-change notification — without
     /// it the observer below would tear down the engine `start()` is still
     /// setting up.
-    private enum RecordingState { case idle, starting, recording }
+    enum RecordingState { case idle, starting, recording }
     private var recordingState: RecordingState = .idle
+    /// Guarded by `lock`. Set when a route change stops a recording, so the
+    /// following `stop()` also resets the engine. Without the reset the next
+    /// `start()` built its tap on the graph from before the change (#57).
+    private var needsEngineReset = false
     /// Guarded by `lock`. When `engine.start()` returned for this recording.
     private var engineStartedAt: Date?
     /// Starting an engine on a freshly bound device posts one more
@@ -184,6 +188,7 @@ final class AudioRecorder {
         var didStart = false
         defer { setRecordingState(didStart ? .recording : .idle) }
 
+        resetEngineIfRouteStopped()
         resetForNewRecording(silenceAutoStop: silenceAutoStop ?? AppSettings.silenceAutoStopSeconds)
 
         // A previous recording can leave the engine running (e.g. stop() ran
@@ -223,12 +228,12 @@ final class AudioRecorder {
         // materialized on (AirPods Max in HFP run at 24 kHz, the built-in mic
         // at 48 kHz), `outputFormat` still reports the old rate, and a tap in
         // that format raises "Failed to create tap due to format mismatch".
-        var inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
-        for _ in 0..<20 where inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
+        var tapFormat = Self.tapFormat(hardware: try catchingNSException("input format") { input.inputFormat(forBus: 0) })
+        for _ in 0..<20 where tapFormat == nil {
             try await Task.sleep(for: .milliseconds(100))
-            inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
+            tapFormat = Self.tapFormat(hardware: try catchingNSException("input format") { input.inputFormat(forBus: 0) })
         }
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+        guard let inputFormat = tapFormat else {
             throw RecorderError.deviceNotReady
         }
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
@@ -269,46 +274,107 @@ final class AudioRecorder {
         lock.withLock { recordingState = state }
     }
 
+    /// The format to install the tap and build the converter with: the input
+    /// node's hardware side (`inputFormat(forBus:)`), never its output side,
+    /// which keeps the rate of the device the node was materialized on (#57).
+    /// nil while the device reports no usable format (Bluetooth mid-handoff).
+    static func tapFormat(hardware: AVAudioFormat) -> AVAudioFormat? {
+        hardware.sampleRate > 0 && hardware.channelCount > 0 ? hardware : nil
+    }
+
+    enum ConfigurationChangeAction: Equatable {
+        /// The echo of our own device bind, or a recording that already
+        /// stopped itself.
+        case ignore
+        /// Starting an engine on a freshly bound device posts one more change
+        /// shortly after `start()` returns while audio keeps flowing.
+        case keepThroughStartEcho
+        /// The route changed under a live recording: auto-stop it, and reset
+        /// the engine in the `stop()` that follows.
+        case stopRecording
+        /// Idle: drop the stale graph so the next `start()` rebuilds it.
+        case resetEngine
+    }
+
+    /// What `handleConfigurationChange` does, pure so it can be tested without
+    /// an engine.
+    static func configurationChangeAction(
+        state: RecordingState,
+        didFireAutoStop: Bool,
+        secondsSinceEngineStart: TimeInterval?,
+        engineRunning: Bool
+    ) -> ConfigurationChangeAction {
+        switch state {
+        case .idle:
+            return .resetEngine
+        case .starting:
+            return .ignore
+        case .recording:
+            if didFireAutoStop { return .ignore }
+            if let secondsSinceEngineStart, secondsSinceEngineStart < startEchoWindow, engineRunning {
+                return .keepThroughStartEcho
+            }
+            return .stopRecording
+        }
+    }
+
     /// Hopped onto the main actor from the configuration-change observer, so
     /// it never interleaves with start()/stop(); the state checks below see
     /// whatever those left behind.
     @MainActor
     private func handleConfigurationChange() {
-        let stopForDeviceChange: Bool = {
-            lock.lock()
-            defer { lock.unlock() }
-            // .starting means this notification is the echo of our own device
-            // binding, not a route change to react to.
-            guard recordingState == .recording, !didFireAutoStop else { return false }
-            if let engineStartedAt,
-               Date().timeIntervalSince(engineStartedAt) < Self.startEchoWindow,
-               engine.isRunning {
-                Log.log("recorder: configuration change right after start, engine still running; keeping the recording")
-                return false
+        let action: ConfigurationChangeAction = lock.withLock {
+            let action = Self.configurationChangeAction(
+                state: recordingState,
+                didFireAutoStop: didFireAutoStop,
+                secondsSinceEngineStart: engineStartedAt.map { Date().timeIntervalSince($0) },
+                engineRunning: engine.isRunning
+            )
+            if action == .stopRecording {
+                didFireAutoStop = true
+                needsEngineReset = true
             }
-            didFireAutoStop = true
-            return true
-        }()
-        if stopForDeviceChange {
+            return action
+        }
+        switch action {
+        case .ignore:
+            break
+        case .keepThroughStartEcho:
+            Log.log("recorder: configuration change right after start, engine still running; keeping the recording")
+        case .stopRecording:
             Log.log("recorder: audio route changed mid-recording, stopping")
             onAutoStop?(.deviceChanged)
-            return
+        case .resetEngine:
+            // Idle: drop the stale graph so the next start() rebuilds it against
+            // the current devices instead of the ones present when it was first
+            // materialized.
+            resetEngine("engine reset after route change")
+            Log.log("recorder: audio route changed while idle, engine reset")
         }
-        guard recordingStateIsIdle else { return }
-        // Idle: drop the stale graph so the next start() rebuilds it against
-        // the current devices instead of the ones present when it was first
-        // materialized.
-        _ = try? catchingNSException("engine reset after route change") {
+    }
+
+    /// A route change ended the last recording: rebuild the graph, the same
+    /// reset the idle branch does, so the next start() reads the formats of
+    /// the devices present then (#57). Runs from stop(), and again from
+    /// start() in case that stop never came.
+    @MainActor
+    private func resetEngineIfRouteStopped() {
+        let pending = lock.withLock {
+            let pending = needsEngineReset
+            needsEngineReset = false
+            return pending
+        }
+        guard pending else { return }
+        resetEngine("engine reset after route stop")
+        Log.log("recorder: engine reset after route-change stop")
+    }
+
+    @MainActor
+    private func resetEngine(_ step: String) {
+        _ = try? catchingNSException(step) {
             self.engine.stop()
             self.engine.reset()
         }
-        Log.log("recorder: audio route changed while idle, engine reset")
-    }
-
-    private var recordingStateIsIdle: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordingState == .idle
     }
 
     /// Runs `body`, turning an Objective-C NSException into a Swift error.
@@ -382,6 +448,7 @@ final class AudioRecorder {
             self.engine.inputNode.removeTap(onBus: 0)
             self.engine.stop()
         }
+        resetEngineIfRouteStopped()
         // Only now go idle. The configuration-change handler resets the engine
         // when it sees .idle (#50); it runs on the main actor now, so it can no
         // longer land inside this teardown either way.
