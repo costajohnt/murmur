@@ -199,9 +199,7 @@ private struct TranscriptRow: View {
     // MARK: - Actions
 
     private func copy() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(primaryText, forType: .string)
+        TextInjector.copyTranscript(primaryText, to: NSPasteboard.general)
         withAnimation { copied = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation { copied = false }
