@@ -105,9 +105,9 @@ final class AudioRecorder {
     /// `updateLevel()`, so every access to them goes through `lock`.
     private var recordStartTime: Date?
     private var silenceStartTime: Date?
-    /// Running estimate of the room's level, same 0..1 space as
-    /// `smoothedLevel`. nil until the first chunk of a recording.
-    private var noiseFloor: Float?
+    /// Running estimate of the room's level. nil until the first chunk of a
+    /// recording.
+    private var noiseFloor: NoiseFloor?
     private var didFireAutoStop = false
     /// Snapshotted from AppSettings at `start()` so the audio thread never
     /// touches UserDefaults mid-recording. 0 disables auto-stop.
@@ -135,12 +135,18 @@ final class AudioRecorder {
     /// noise floor. 8 dB clears the floor tracker's bias toward the quiet
     /// dips of the room tone and stays well under speech.
     static let silenceMarginAboveFloor: Float = 8 / (dbCeiling - dbFloor)
-    /// The floor drops to any quieter level at once but rises only this fast
-    /// (1 dB/s), so speech barely lifts it and pauses pull it back down.
+    /// The floor rises only this fast (1 dB/s), so speech barely lifts it and
+    /// pauses pull it back down.
     static let noiseFloorRisePerSecond: Float = 1 / (dbCeiling - dbFloor)
-    /// -26 dBFS: louder "room tone" is more likely sustained speech, and the
-    /// threshold above it must stay below normal speaking level.
-    static let maxNoiseFloor: Float = 24 / (dbCeiling - dbFloor)
+    /// The floor drops to a quieter level only once it has lasted this long.
+    /// A mic mute, a Bluetooth handoff or a hand over the mic is sub-second;
+    /// following it would drop the floor to the bottom of the meter, and at
+    /// 1 dB/s it takes ~11 s to climb back over the #82 room tone.
+    static let noiseFloorDropHoldSeconds: TimeInterval = 1
+    /// -32 dBFS: louder "room tone" is more likely sustained speech. The
+    /// threshold above it (-24 dBFS) stays 9 dB under -15 dBFS speech and
+    /// still covers the #82 room (-30.6 dBFS, a few dB of jitter).
+    static let maxNoiseFloor: Float = 18 / (dbCeiling - dbFloor)
     /// Never auto-stop this early — the user hasn't necessarily started
     /// talking yet.
     private static let silenceGraceSeconds: TimeInterval = 1.5
@@ -482,8 +488,9 @@ final class AudioRecorder {
         let (level, shouldFire, floor): (Float, Bool, Float) = lock.withLock {
             let alpha = normalized > smoothedLevel ? Self.attackAlpha : Self.decayAlpha
             smoothedLevel += alpha * (normalized - smoothedLevel)
-            let floor = Self.trackNoiseFloor(level: smoothedLevel, floor: noiseFloor, elapsed: chunkSeconds)
-            noiseFloor = floor
+            let tracked = Self.trackNoiseFloor(level: smoothedLevel, floor: noiseFloor, elapsed: chunkSeconds)
+            noiseFloor = tracked
+            let floor = tracked.level
             guard !didFireAutoStop, let recordStartTime else { return (smoothedLevel, false, floor) }
             let step = Self.silenceStep(
                 level: smoothedLevel, now: now, recordStart: recordStartTime,
@@ -522,18 +529,33 @@ final class AudioRecorder {
         return (now.timeIntervalSince(start) >= duration, start)
     }
 
+    /// The noise-floor estimate, same 0..1 space as `smoothedLevel`.
+    struct NoiseFloor: Equatable {
+        var level: Float
+        /// Seconds of audio the level has stayed under `level` without the
+        /// floor following it yet.
+        var belowSeconds: TimeInterval = 0
+    }
+
     /// One step of the noise-floor tracker, pure for the same reason as
-    /// `silenceStep`: follows a quieter level immediately, rises at most
-    /// `riseRate` per second of audio, never above `maxNoiseFloor`. The first
-    /// chunk of a recording seeds it.
+    /// `silenceStep`: follows a quieter level once it has lasted `dropHold`,
+    /// rises at most `riseRate` per second of audio, never above
+    /// `maxNoiseFloor`. The first chunk of a recording seeds it.
     static func trackNoiseFloor(
         level: Float,
-        floor: Float?,
+        floor: NoiseFloor?,
         elapsed: TimeInterval,
-        riseRate: Float = noiseFloorRisePerSecond
-    ) -> Float {
-        let risen = floor.map { $0 + riseRate * Float(elapsed) } ?? level
-        return min(level, risen, maxNoiseFloor)
+        riseRate: Float = noiseFloorRisePerSecond,
+        dropHold: TimeInterval = noiseFloorDropHoldSeconds
+    ) -> NoiseFloor {
+        guard let floor else { return NoiseFloor(level: min(level, maxNoiseFloor)) }
+        if level < floor.level {
+            let below = floor.belowSeconds + elapsed
+            return below >= dropHold
+                ? NoiseFloor(level: level)
+                : NoiseFloor(level: floor.level, belowSeconds: below)
+        }
+        return NoiseFloor(level: min(level, floor.level + riseRate * Float(elapsed), maxNoiseFloor))
     }
 
     /// Level at or below which audio counts as silence: `silenceMarginAboveFloor`
