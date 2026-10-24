@@ -236,12 +236,23 @@ enum AppSettings {
     static let defaultSendWord = "send"
 
     /// Word(s) that, said at the end of a dictation, press Return after the
-    /// paste (e.g. "send" to submit in a terminal or chat box). An unwritten
-    /// key means `defaultSendWord`, so hands-free dictation has a way to
-    /// finish out of the box (#83); an explicitly stored empty value (the
-    /// user cleared the field) = off.
-    static var sendWord: String {
-        (defaults.string(forKey: sendWordKey) ?? defaultSendWord).trimmingCharacters(in: .whitespacesAndNewlines)
+    /// paste (e.g. "send" to submit in a terminal or chat box). A stored
+    /// value applies to every dictation; an explicitly stored empty value
+    /// (the user cleared the field) = off. An unwritten key means
+    /// `defaultSendWord` for hands-free dictation only, so it has a way to
+    /// finish out of the box (#83), while pill and hotkey dictation on an
+    /// upgraded install never start pressing Return after a sentence that
+    /// happens to end in "send".
+    static func sendWord(handsFree: Bool) -> String {
+        guard let stored = defaults.string(forKey: sendWordKey) else {
+            return handsFree ? defaultSendWord : ""
+        }
+        return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The user has typed a send word (or cleared the field).
+    static var sendWordIsSet: Bool {
+        defaults.string(forKey: sendWordKey) != nil
     }
 
     /// Hands-free: keep the mic open while idle and start dictating when the

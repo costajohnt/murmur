@@ -45,25 +45,39 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Send word (#83)
 
-    /// Unwritten key = "send", so hands-free dictation can be finished by
-    /// voice on a fresh install.
-    func testUnwrittenSendWordDefaultsToSend() {
-        XCTAssertEqual(AppSettings.sendWord, "send")
-        XCTAssertEqual(AppSettings.sendWord, AppSettings.defaultSendWord)
+    /// Unwritten key = "send" for hands-free dictation, so a fresh install
+    /// can finish one by voice.
+    func testUnwrittenSendWordDefaultsToSendWhenHandsFree() {
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "send")
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), AppSettings.defaultSendWord)
+    }
+
+    /// Unwritten key = off for pill, hotkey and push-to-talk dictation, so an
+    /// upgrade never starts pressing Return after a sentence ending in
+    /// "send".
+    func testUnwrittenSendWordIsOffForManualDictation() {
+        XCTAssertEqual(AppSettings.sendWord(handsFree: false), "")
+    }
+
+    /// A word the user set applies to every dictation.
+    func testStoredSendWordAppliesToBothModes() {
+        defaults.set("over", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord(handsFree: false), "over")
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "over")
     }
 
     /// Clearing the field stores "", which must stay off rather than fall
     /// back to the default.
     func testExplicitlyClearedSendWordStaysOff() {
         defaults.set("", forKey: AppSettings.sendWordKey)
-        XCTAssertEqual(AppSettings.sendWord, "")
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "")
         defaults.set("   ", forKey: AppSettings.sendWordKey)
-        XCTAssertEqual(AppSettings.sendWord, "")
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "")
     }
 
     func testStoredSendWordIsTrimmed() {
         defaults.set("  over and out \n", forKey: AppSettings.sendWordKey)
-        XCTAssertEqual(AppSettings.sendWord, "over and out")
+        XCTAssertEqual(AppSettings.sendWord(handsFree: false), "over and out")
     }
 
     // MARK: - Stale-value migration
