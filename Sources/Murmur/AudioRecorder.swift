@@ -190,6 +190,24 @@ final class AudioRecorder {
 
         resetEngineIfRouteStopped()
         resetForNewRecording(silenceAutoStop: silenceAutoStop ?? AppSettings.silenceAutoStopSeconds)
+        do {
+            try await startEngine()
+            didStart = true
+        } catch {
+            // A failed start leaves whatever graph made it fail (a tap format
+            // mismatch on a stale input node, #57). Without a reset every
+            // retry materializes the same node and fails the same way until
+            // an unrelated route change arrives while idle.
+            resetEngine("engine reset after failed start")
+            Log.log("recorder: start failed, engine reset")
+            throw error
+        }
+    }
+
+    /// The graph half of `start()`: everything that can raise on a stale
+    /// engine.
+    @MainActor
+    private func startEngine() async throws {
 
         // A previous recording can leave the engine running (e.g. stop() ran
         // while the hardware was mid-reset, or a device change restarted it
@@ -255,7 +273,6 @@ final class AudioRecorder {
         }
         try engine.start()
         lock.withLock { engineStartedAt = Date() }
-        didStart = true
     }
 
     private func resetForNewRecording(silenceAutoStop: TimeInterval) {
@@ -283,9 +300,12 @@ final class AudioRecorder {
     }
 
     enum ConfigurationChangeAction: Equatable {
-        /// The echo of our own device bind, or a recording that already
-        /// stopped itself.
+        /// The echo of our own device bind.
         case ignore
+        /// The recording already stopped itself (silence, length cap, or an
+        /// earlier route change) and its `stop()` has not run yet: no second
+        /// auto-stop, but that `stop()` still resets the engine.
+        case resetAfterAutoStop
         /// Starting an engine on a freshly bound device posts one more change
         /// shortly after `start()` returns while audio keeps flowing.
         case keepThroughStartEcho
@@ -294,6 +314,11 @@ final class AudioRecorder {
         case stopRecording
         /// Idle: drop the stale graph so the next `start()` rebuilds it.
         case resetEngine
+
+        /// The `stop()` that follows must reset the engine (#57).
+        var resetsEngineOnStop: Bool {
+            self == .stopRecording || self == .resetAfterAutoStop
+        }
     }
 
     /// What `handleConfigurationChange` does, pure so it can be tested without
@@ -310,7 +335,7 @@ final class AudioRecorder {
         case .starting:
             return .ignore
         case .recording:
-            if didFireAutoStop { return .ignore }
+            if didFireAutoStop { return .resetAfterAutoStop }
             if let secondsSinceEngineStart, secondsSinceEngineStart < startEchoWindow, engineRunning {
                 return .keepThroughStartEcho
             }
@@ -330,15 +355,15 @@ final class AudioRecorder {
                 secondsSinceEngineStart: engineStartedAt.map { Date().timeIntervalSince($0) },
                 engineRunning: engine.isRunning
             )
-            if action == .stopRecording {
-                didFireAutoStop = true
-                needsEngineReset = true
-            }
+            if action == .stopRecording { didFireAutoStop = true }
+            if action.resetsEngineOnStop { needsEngineReset = true }
             return action
         }
         switch action {
         case .ignore:
             break
+        case .resetAfterAutoStop:
+            Log.log("recorder: audio route changed after auto-stop; engine resets on stop")
         case .keepThroughStartEcho:
             Log.log("recorder: configuration change right after start, engine still running; keeping the recording")
         case .stopRecording:

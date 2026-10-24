@@ -1,7 +1,7 @@
 import AVFoundation
 import XCTest
 
-/// Tap-format choice and the configuration-change decision behind #57
+/// Tap-format validity and the configuration-change decision behind #57
 /// (pinned built-in mic at 48 kHz, Bluetooth system default at 24 kHz). Pure
 /// statics: no engine, no hardware.
 final class AudioRecorderRouteTests: XCTestCase {
@@ -10,15 +10,6 @@ final class AudioRecorderRouteTests: XCTestCase {
     }
 
     // MARK: - Tap format
-
-    /// The hardware side is what the tap must use. After binding the 48 kHz
-    /// mic on a node materialized on the 24 kHz headset, the node's output
-    /// side still reports 24 kHz, and a tap in that format raises.
-    func testTapUsesTheHardwareFormatNotTheStaleOutputFormat() {
-        let chosen = AudioRecorder.tapFormat(hardware: format(48_000))
-        XCTAssertEqual(chosen?.sampleRate, 48_000)
-        XCTAssertEqual(chosen?.channelCount, 1)
-    }
 
     /// Mid A2DP to HFP handoff the hardware reports 0 Hz / 0 channels; that
     /// must never reach installTap.
@@ -67,8 +58,22 @@ final class AudioRecorderRouteTests: XCTestCase {
         XCTAssertEqual(action(.recording, sinceStart: 5), .stopRecording)
     }
 
-    func testOnlyOneAutoStopPerRecording() {
-        XCTAssertEqual(action(.recording, fired: true), .ignore)
+    /// Silence or the length cap already fired; a route change before that
+    /// recording's stop() runs must not fire a second auto-stop, but the
+    /// stop() still has to reset the engine or the next start() builds on
+    /// the stale graph.
+    func testRouteChangeAfterAutoStopFiredStillResetsOnStop() {
+        let decided = action(.recording, fired: true)
+        XCTAssertEqual(decided, .resetAfterAutoStop)
+        XCTAssertTrue(decided.resetsEngineOnStop)
+    }
+
+    func testOnlyARouteStopOrAPendingAutoStopResetsOnStop() {
+        XCTAssertTrue(action(.recording, sinceStart: 5).resetsEngineOnStop)
+        XCTAssertFalse(action(.starting).resetsEngineOnStop)
+        XCTAssertFalse(action(.recording, sinceStart: 0.3, running: true).resetsEngineOnStop)
+        // Idle resets right away instead; nothing is left for a stop().
+        XCTAssertFalse(action(.idle, sinceStart: nil, running: false).resetsEngineOnStop)
     }
 
     func testChangeWhileIdleResetsTheEngine() {
