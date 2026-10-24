@@ -24,6 +24,8 @@ final class WakeWordListener {
     /// was cancelled meanwhile.
     private var generation = 0
     private var transcribing = false
+    /// Mic-open retries since the last successful start (`WakeRetry`).
+    private var retries = 0
 
     private init() {}
 
@@ -73,6 +75,7 @@ final class WakeWordListener {
                     return
                 }
                 running = true
+                retries = 0
                 Log.log("wake: listening for \"\(AppSettings.wakePhrase)\"")
             } catch {
                 starting = false
@@ -81,6 +84,15 @@ final class WakeWordListener {
                     return
                 }
                 Log.log("wake: could not open the mic: \(error.localizedDescription)")
+                if let delay = WakeRetry.delay(after: error, attempt: retries) {
+                    retries += 1
+                    Log.log("wake: retrying in \(Int(delay))s (attempt \(retries))")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    // A pause/stop meanwhile owns what happens next.
+                    if generation == myGeneration { apply() }
+                    return
+                }
+                retries = 0
                 AppStatus.shared.report("Wake word is off: \(error.localizedDescription)")
             }
         }
@@ -88,6 +100,7 @@ final class WakeWordListener {
 
     private func stop() {
         generation += 1
+        retries = 0
         recorder.onChunk = nil
         recorder.onAutoStop = nil
         // A start in flight sees the bumped generation and stops itself.
