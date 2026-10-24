@@ -43,6 +43,29 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings.cleanupMode, .off)
     }
 
+    // MARK: - Send word (#83)
+
+    /// Unwritten key = "send", so hands-free dictation can be finished by
+    /// voice on a fresh install.
+    func testUnwrittenSendWordDefaultsToSend() {
+        XCTAssertEqual(AppSettings.sendWord, "send")
+        XCTAssertEqual(AppSettings.sendWord, AppSettings.defaultSendWord)
+    }
+
+    /// Clearing the field stores "", which must stay off rather than fall
+    /// back to the default.
+    func testExplicitlyClearedSendWordStaysOff() {
+        defaults.set("", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord, "")
+        defaults.set("   ", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord, "")
+    }
+
+    func testStoredSendWordIsTrimmed() {
+        defaults.set("  over and out \n", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord, "over and out")
+    }
+
     // MARK: - Stale-value migration
     //
     // A tone preset stored by an older version can stop parsing when the
