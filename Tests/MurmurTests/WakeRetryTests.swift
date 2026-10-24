@@ -13,10 +13,19 @@ final class WakeRetryTests: XCTestCase {
         XCTAssertEqual(WakeRetry.delay(after: error, attempt: 0), 2)
     }
 
+    /// `engine.start()` rethrows AVAudioEngine's own NSError, e.g.
+    /// kAudioUnitErr_CannotDoInCurrentContext while the HAL re-binds after a
+    /// route change: transient, like any error that isn't a known-permanent one.
+    func testEngineStartNSErrorRetries() {
+        let error = NSError(domain: "com.apple.coreaudio.avfaudio", code: -10863)
+        XCTAssertEqual(WakeRetry.delay(after: error, attempt: 0), 2)
+        XCTAssertEqual(WakeRetry.delay(after: error, attempt: 1), 5)
+        XCTAssertNil(WakeRetry.delay(after: error, attempt: 2))
+    }
+
     /// Retrying cannot fix these: report the wake word off right away.
     func testPermanentFailuresDoNotRetry() {
         XCTAssertNil(WakeRetry.delay(after: AudioRecorder.RecorderError.micDenied, attempt: 0))
         XCTAssertNil(WakeRetry.delay(after: AudioRecorder.RecorderError.converterUnavailable, attempt: 0))
-        XCTAssertNil(WakeRetry.delay(after: URLError(.unknown), attempt: 0))
     }
 }

@@ -11,11 +11,14 @@ enum WakeRetry {
 
     /// Seconds to wait before retry number `attempt` (0-based), or nil to
     /// give up and report the wake word off.
+    /// Only a denied mic and a missing converter are permanent; anything
+    /// else (including AVAudioEngine's own NSError from `engine.start()`) is
+    /// treated as a device still settling.
     static func delay(after error: Error, attempt: Int) -> TimeInterval? {
-        guard attempt < delays.count, let error = error as? AudioRecorder.RecorderError else { return nil }
-        switch error {
-        case .deviceNotReady, .engineFailed: return delays[attempt]
+        guard attempt < delays.count else { return nil }
+        switch error as? AudioRecorder.RecorderError {
         case .micDenied, .converterUnavailable: return nil
+        case .deviceNotReady, .engineFailed, nil: return delays[attempt]
         }
     }
 }

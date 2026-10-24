@@ -26,11 +26,16 @@ final class WakeWordListener {
     private var transcribing = false
     /// Mic-open retries since the last successful start (`WakeRetry`).
     private var retries = 0
+    /// A retry waiting out its delay. Cancelled by `apply()`, so a Settings
+    /// change meanwhile doesn't fork a second retry chain.
+    private var retryTask: Task<Void, Never>?
 
     private init() {}
 
     /// Re-sync with settings (launch and Settings changes).
     func apply() {
+        retryTask?.cancel()
+        retryTask = nil
         if AppSettings.wakeWordEnabled, !paused {
             start()
         } else {
@@ -87,9 +92,12 @@ final class WakeWordListener {
                 if let delay = WakeRetry.delay(after: error, attempt: retries) {
                     retries += 1
                     Log.log("wake: retrying in \(Int(delay))s (attempt \(retries))")
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    // A pause/stop meanwhile owns what happens next.
-                    if generation == myGeneration { apply() }
+                    retryTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        // A pause/stop or an apply() meanwhile owns what happens next.
+                        guard let self, !Task.isCancelled, self.generation == myGeneration else { return }
+                        self.apply()
+                    }
                     return
                 }
                 retries = 0
