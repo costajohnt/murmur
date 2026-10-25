@@ -62,7 +62,9 @@ struct OllamaClient {
         var errorDescription: String? {
             switch self {
             case .unreachable(let underlying): return "Ollama unreachable: \(underlying)"
-            case .badStatus(let code, let body): return "Ollama HTTP \(code): \(body.prefix(200))"
+            // No body: this is logged, and a server echoing the request would
+            // put transcript text there (same rule as BrainstemClient).
+            case .badStatus(let code, _): return "Ollama HTTP \(code)"
             case .emptyResponse: return "Ollama returned an empty message"
             case .notAReformat: return "Cleanup rewrote the dictation instead of formatting it; kept the original"
             case .noModelInstalled: return "Ollama has no models installed. Run: ollama pull \(OllamaClient.fallbackModel)"
