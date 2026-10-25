@@ -45,16 +45,13 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Send word (#83)
 
-    /// Unwritten key = "send" for hands-free dictation, so a fresh install
-    /// can finish one by voice.
-    func testUnwrittenSendWordDefaultsToSendWhenHandsFree() {
-        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "send")
-        XCTAssertEqual(AppSettings.sendWord(handsFree: true), AppSettings.defaultSendWord)
+    /// Unwritten key = off for every dictation path, wake word included:
+    /// ambient audio saying the wake phrase then "send" must never press
+    /// Return in the focused app unless the user set a send word.
+    func testUnwrittenSendWordIsOffWhenHandsFree() {
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "")
     }
 
-    /// Unwritten key = off for pill, hotkey and push-to-talk dictation, so an
-    /// upgrade never starts pressing Return after a sentence ending in
-    /// "send".
     func testUnwrittenSendWordIsOffForManualDictation() {
         XCTAssertEqual(AppSettings.sendWord(handsFree: false), "")
     }

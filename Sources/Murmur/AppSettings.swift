@@ -232,27 +232,15 @@ enum AppSettings {
         defaults.string(forKey: brainstemURLKey) ?? ""
     }
 
-    /// SettingsView's @AppStorage default must match this.
-    static let defaultSendWord = "send"
-
     /// Word(s) that, said at the end of a dictation, press Return after the
-    /// paste (e.g. "send" to submit in a terminal or chat box). A stored
-    /// value applies to every dictation; an explicitly stored empty value
-    /// (the user cleared the field) = off. An unwritten key means
-    /// `defaultSendWord` for hands-free dictation only, so it has a way to
-    /// finish out of the box (#83), while pill and hotkey dictation on an
-    /// upgraded install never start pressing Return after a sentence that
-    /// happens to end in "send".
+    /// paste (e.g. "send" to submit in a terminal or chat box). Off (empty)
+    /// until the user sets one, for every dictation path: a wake-word
+    /// default would let ambient audio (a TV, a call) say the wake phrase
+    /// then "send" and press Return in the focused app, terminals included.
+    // ponytail: handsFree is unused today; kept so callers name the path
+    // and the tests pin the wake-word case to off.
     static func sendWord(handsFree: Bool) -> String {
-        guard let stored = defaults.string(forKey: sendWordKey) else {
-            return handsFree ? defaultSendWord : ""
-        }
-        return stored.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// The user has typed a send word (or cleared the field).
-    static var sendWordIsSet: Bool {
-        defaults.string(forKey: sendWordKey) != nil
+        (defaults.string(forKey: sendWordKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Hands-free: keep the mic open while idle and start dictating when the
