@@ -93,6 +93,8 @@ targets:
       - path: Sources/Murmur/DictationPipeline.swift
       - path: Sources/Murmur/AudioRecorder.swift
       - path: Sources/Murmur/AudioInputDevice.swift
+      - path: Sources/Murmur/DictationControl.swift
+      - path: Sources/Murmur/WakeListenerState.swift
       - path: Sources/Murmur/TextInjector.swift
       - path: Sources/Murmur/UpdateChecker.swift
       - path: Sources/Murmur/PillPlacement.swift
