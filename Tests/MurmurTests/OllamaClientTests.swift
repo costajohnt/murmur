@@ -181,6 +181,13 @@ final class OllamaClientTests: StubbedNetworkTestCase {
         }
     }
 
+    func testBadStatusDescriptionOmitsResponseBody() {
+        // The description is logged; like Brainstem's, a server echoing the
+        // request must not be able to put transcript text there.
+        let error = OllamaClient.OllamaError.badStatus(500, body: "echo: my private note")
+        XCTAssertEqual(error.errorDescription, "Ollama HTTP 500")
+    }
+
     func testCleanThrowsUnreachableOnTransportError() async throws {
         StubURLProtocol.handler = { _ in
             throw URLError(.notConnectedToInternet)

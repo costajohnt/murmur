@@ -30,6 +30,19 @@ final class VoiceCommandsTests: XCTestCase {
         XCTAssertFalse(VoiceCommands.containsWakePhrase("", phrase: "hey murmur"))
         XCTAssertFalse(VoiceCommands.containsWakePhrase("hey murmur", phrase: ""))
     }
+
+    /// Pins the slip tolerance (`max(1, count / 6)`) at its boundary: "hey
+    /// mother" is distance 4, so on its own it lets a 3x looser tolerance
+    /// through, and a looser match starts dictations on near-misses.
+    func testWakePhraseToleranceBoundary() {
+        // "hey murmur" is 10 characters: tolerance 1.
+        XCTAssertTrue(VoiceCommands.containsWakePhrase("hey murmer", phrase: "hey murmur"))  // distance 1
+        XCTAssertFalse(VoiceCommands.containsWakePhrase("hey murder", phrase: "hey murmur")) // distance 2
+        XCTAssertFalse(VoiceCommands.containsWakePhrase("hey mirror", phrase: "hey murmur")) // distance 3
+        // "hello murmur" is 12 characters: tolerance 2.
+        XCTAssertTrue(VoiceCommands.containsWakePhrase("hallo murmer", phrase: "hello murmur"))  // distance 2
+        XCTAssertFalse(VoiceCommands.containsWakePhrase("hallo murder", phrase: "hello murmur")) // distance 3
+    }
 }
 
 final class UtteranceSegmenterTests: XCTestCase {
