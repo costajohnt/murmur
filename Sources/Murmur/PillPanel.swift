@@ -35,19 +35,6 @@ enum PillMetrics {
 
 // MARK: - State
 
-enum PillPhase {
-    case idle
-    case listening
-    case processing
-    /// Brief post-processing confirmation that a "note to self" dictation
-    /// was captured to the vault instead of pasted — pasting has the pasted
-    /// text itself as visible proof it worked; a vault capture has nothing
-    /// to look at, so this state exists purely to give that same "it
-    /// worked" signal. Mirrors `.processing`'s SweepDot: shown briefly, then
-    /// DictationCoordinator returns the pill to `.idle`.
-    case captured
-}
-
 /// Parakeet model lifecycle. The first run downloads hundreds of MB inside
 /// `DictationCoordinator.ensureAsr()`; this makes that visible in the pill
 /// and in Setup.

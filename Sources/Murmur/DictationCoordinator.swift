@@ -43,14 +43,12 @@ final class DictationCoordinator {
     // MARK: - Pill entry point
 
     func pillTapped() {
-        switch pillState.phase {
-        case .idle:
+        switch DictationControl.tap(phase: pillState.phase) {
+        case .start:
             startListening()
-        case .listening:
+        case .stop:
             stopAndProcess()
-        case .processing, .captured:
-            // Ignore clicks while the pipeline runs or the capture
-            // confirmation is showing; both return to idle on their own.
+        case .ignore:
             Log.log("pipeline: click ignored (\(pillState.phase))")
         }
     }
@@ -59,7 +57,7 @@ final class DictationCoordinator {
     /// Silence auto-stop always ends it, even with the setting off, since
     /// there is no hand on the pill to stop it.
     func wakeWordHeard() {
-        guard pillState.phase == .idle, !isStarting else { return }
+        guard DictationControl.wakeCanStart(phase: pillState.phase, isStarting: isStarting) else { return }
         Log.log("wake word: starting hands-free dictation")
         let silence = AppSettings.silenceAutoStopSeconds
         startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds, chime: true)
@@ -78,10 +76,10 @@ final class DictationCoordinator {
     /// Push-to-talk key up: stop if listening; if still starting, stop once
     /// the engine is running.
     func pushToTalkReleased() {
-        if isStarting {
-            stopWhenStarted = true
-        } else if pillState.phase == .listening {
-            stopAndProcess()
+        switch DictationControl.pushToTalkRelease(phase: pillState.phase, isStarting: isStarting) {
+        case .stopWhenStarted: stopWhenStarted = true
+        case .stop: stopAndProcess()
+        case .none: break
         }
     }
 
@@ -89,7 +87,7 @@ final class DictationCoordinator {
     /// ASR, no cleanup, no injection, no history entry — straight back to
     /// idle.
     func cancel() {
-        guard pillState.phase == .listening else {
+        guard DictationControl.canStop(phase: pillState.phase) else {
             Log.log("pipeline: cancel ignored (phase \(pillState.phase))")
             return
         }
@@ -180,7 +178,7 @@ final class DictationCoordinator {
     /// before this could run. Either way the audio recorded so far is
     /// transcribed, exactly as a manual stop would.
     private func autoStop(_ reason: AudioRecorder.AutoStopReason) {
-        guard pillState.phase == .listening else { return }
+        guard DictationControl.canStop(phase: pillState.phase) else { return }
         switch reason {
         case .silence:
             Log.log("record auto-stop: sustained silence, stopping")
@@ -209,18 +207,20 @@ final class DictationCoordinator {
     /// per 30 s of audio on the ANE. Transcribe only the tail if very long
     /// dictations make that noticeable.
     private func checkForSendWord(_ sendWord: String) {
-        guard pillState.phase == .listening, !checkingSendWord,
-              pillState.asrModel == .ready else { return }
+        guard DictationControl.shouldCheckSendWord(
+            phase: pillState.phase, checking: checkingSendWord, asrReady: pillState.asrModel == .ready
+        ) else { return }
         let samples = recorder.snapshotSamples()
-        guard samples.count > Int(AudioRecorder.sampleRate * 0.3) else { return }
+        guard DictationControl.isSpeechLength(samples.count) else { return }
         checkingSendWord = true
         let recording = recordStart
         Task { @MainActor in
             defer { checkingSendWord = false }
             guard let asr = try? await ensureAsr(),
                   let text = try? await Self.transcribe(samples, with: asr),
-                  pillState.phase == .listening, recordStart == recording,
-                  VoiceCommands.stripSendWord(from: text, sendWord: sendWord) != nil
+                  DictationControl.sendWordCuts(
+                      text, sendWord: sendWord, phase: pillState.phase, sameRecording: recordStart == recording
+                  )
             else { return }
             Log.log("send word heard: stopping at \(samples.count) samples")
             stopAndProcess(keeping: samples.count)
@@ -230,8 +230,7 @@ final class DictationCoordinator {
     /// `keeping`: process only the first N samples (the send word cut).
     private func stopAndProcess(keeping: Int? = nil) {
         pillState.phase = .processing
-        let recorded = recorder.stop()
-        let samples = keeping.map { Array(recorded.prefix($0)) } ?? recorded
+        let samples = DictationControl.samplesToProcess(recorder.stop(), keeping: keeping)
         recorder.onLevel = nil
         recorder.onAutoStop = nil
         recorder.onChunk = nil
@@ -249,8 +248,7 @@ final class DictationCoordinator {
     }
 
     private func process(samples: [Float], durationMs: Int?, target: NSRunningApplication?) async {
-        // Under ~0.3 s of audio is a stray double-click, not speech.
-        guard samples.count > Int(AudioRecorder.sampleRate * 0.3) else {
+        guard DictationControl.isSpeechLength(samples.count) else {
             Log.log("pipeline: recording too short (\(samples.count) samples), discarded")
             return
         }
