@@ -39,7 +39,6 @@ final class UpdateChecker: ObservableObject {
         }
         let last = AppSettings.defaults.object(forKey: AppSettings.lastUpdateCheckKey) as? Date ?? .distantPast
         guard Date().timeIntervalSince(last) >= Self.interval else { return }
-        AppSettings.defaults.set(Date(), forKey: AppSettings.lastUpdateCheckKey)
         Task { await check() }
     }
 
@@ -48,18 +47,28 @@ final class UpdateChecker: ObservableObject {
         let html_url: URL
     }
 
-    private func check() async {
+    private nonisolated static func ephemeralSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 10
-        let session = URLSession(configuration: config)
+        return URLSession(configuration: config)
+    }
+
+    /// Stamps the daily check only once GitHub answered, so an offline
+    /// launch or a rate-limited reply is retried on the next hourly tick.
+    func check(session: URLSession = UpdateChecker.ephemeralSession()) async {
         defer { session.finishTasksAndInvalidate() }
         do {
             let (data, _) = try await session.data(from: Self.latestURL)
             let latest = try JSONDecoder().decode(LatestRelease.self, from: data)
+            AppSettings.defaults.set(Date(), forKey: AppSettings.lastUpdateCheckKey)
             let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
             let remote = Self.stripV(latest.tag_name)
+            guard Self.isTrustedReleaseURL(latest.html_url) else {
+                Log.log("update: ignoring release with an unexpected URL")
+                return
+            }
             if Self.isNewer(remote, than: local) {
                 available = Release(version: remote, url: latest.html_url)
                 Log.log("update: \(remote) available (running \(local))")
@@ -69,6 +78,12 @@ final class UpdateChecker: ObservableObject {
         } catch {
             Log.log("update: check failed: \(error.localizedDescription)")
         }
+    }
+
+    /// The menu item hands this URL to `NSWorkspace.open`, which launches
+    /// whatever handles its scheme; only a GitHub https page is opened.
+    nonisolated static func isTrustedReleaseURL(_ url: URL) -> Bool {
+        url.scheme == "https" && url.host == "github.com"
     }
 
     nonisolated static func stripV(_ tag: String) -> String {
