@@ -37,6 +37,9 @@ final class DictationCoordinator {
     private var didAutoOpenOnboarding = false
     /// A send-word check (transcribe-so-far on a pause) is running.
     private var checkingSendWord = false
+    /// Read once at dictation start (it depends on how the dictation
+    /// started), so the pause check and the pipeline agree on it. Empty = off.
+    private var sendWord = ""
 
     private init() {}
 
@@ -60,7 +63,7 @@ final class DictationCoordinator {
         guard DictationControl.wakeCanStart(phase: pillState.phase, isStarting: isStarting) else { return }
         Log.log("wake word: starting hands-free dictation")
         let silence = AppSettings.silenceAutoStopSeconds
-        startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds, chime: true)
+        startListening(silenceAutoStop: silence > 0 ? silence : Self.handsFreeSilenceSeconds, chime: true, handsFree: true)
     }
 
     /// Hands-free stop when the user turned silence auto-stop off.
@@ -109,7 +112,7 @@ final class DictationCoordinator {
     /// start), so it means "talk now". Opening the mic can take ~2 s
     /// (Bluetooth, device bind); a cue at wake time had people talking
     /// into that gap.
-    private func startListening(silenceAutoStop: TimeInterval? = nil, chime: Bool = false) {
+    private func startListening(silenceAutoStop: TimeInterval? = nil, chime: Bool = false, handsFree: Bool = false) {
         guard !isStarting else {
             Log.log("pipeline: click ignored (recording already starting)")
             return
@@ -129,7 +132,8 @@ final class DictationCoordinator {
         // hop to main for the @Published updates.
         // Send word ends the dictation: on every pause, check whether what
         // was said so far ends with it.
-        let sendWord = AppSettings.sendWord
+        let sendWord = AppSettings.sendWord(handsFree: handsFree)
+        self.sendWord = sendWord
         recorder.onChunk = sendWord.isEmpty ? nil : Self.pauseHandler { [weak self] in
             DispatchQueue.main.async { self?.checkForSendWord(sendWord) }
         }
@@ -240,14 +244,15 @@ final class DictationCoordinator {
         Log.log("record stop: \(samples.count) samples (\(String(format: "%.2f", Double(samples.count) / AudioRecorder.sampleRate))s)")
 
         let target = targetApp
+        let sendWord = sendWord
         Task { @MainActor in
-            await process(samples: samples, durationMs: durationMs, target: target)
+            await process(samples: samples, durationMs: durationMs, target: target, sendWord: sendWord)
             pillState.phase = .idle
             WakeWordListener.shared.resume()
         }
     }
 
-    private func process(samples: [Float], durationMs: Int?, target: NSRunningApplication?) async {
+    private func process(samples: [Float], durationMs: Int?, target: NSRunningApplication?, sendWord: String) async {
         guard DictationControl.isSpeechLength(samples.count) else {
             Log.log("pipeline: recording too short (\(samples.count) samples), discarded")
             return
@@ -295,7 +300,7 @@ final class DictationCoordinator {
             return
         }
 
-        await finish(raw: raw, audioPath: audioPath, durationMs: durationMs, target: target)
+        await finish(raw: raw, audioPath: audioPath, durationMs: durationMs, target: target, sendWord: sendWord)
     }
 
     /// Post-ASR pipeline tail: `DictationPipeline` decides (near-silence
@@ -305,8 +310,8 @@ final class DictationCoordinator {
     /// known transcript. `inject` defaults to true for the real pipeline; dev
     /// hooks pass false to exercise cleanup without pasting into whatever app
     /// happens to be frontmost.
-    func finish(raw: String, audioPath: String?, durationMs: Int?, target: NSRunningApplication?, inject: Bool = true) async {
-        let pipeline = DictationPipeline.live(ollama: ollama)
+    func finish(raw: String, audioPath: String?, durationMs: Int?, target: NSRunningApplication?, sendWord: String = "", inject: Bool = true) async {
+        let pipeline = DictationPipeline.live(ollama: ollama, sendWord: sendWord)
         guard let outcome = await pipeline.run(raw: raw, targetGone: { target?.isTerminated ?? false }) else {
             // Discarded as noise: no history entry, so drop the orphaned WAV.
             if let audioPath {
@@ -528,7 +533,8 @@ extension DictationPipeline {
     static func live(
         ollama: OllamaClient = OllamaClient(),
         mode: CleanupMode = AppSettings.cleanupMode,
-        brainstemURL: String = AppSettings.brainstemURL
+        brainstemURL: String = AppSettings.brainstemURL,
+        sendWord: String = ""
     ) -> DictationPipeline {
         DictationPipeline(
             mode: mode,
@@ -542,7 +548,7 @@ extension DictationPipeline {
             },
             capture: brainstemURL.isEmpty ? nil : { try await BrainstemClient(baseURL: brainstemURL).capture($0) },
             report: { AppStatus.shared.report($0) },
-            sendWord: AppSettings.sendWord
+            sendWord: sendWord
         )
     }
 }

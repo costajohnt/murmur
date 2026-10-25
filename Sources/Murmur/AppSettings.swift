@@ -233,9 +233,13 @@ enum AppSettings {
     }
 
     /// Word(s) that, said at the end of a dictation, press Return after the
-    /// paste (e.g. "send" to submit in a terminal or chat box). Empty (the
-    /// unwritten-key default) = off.
-    static var sendWord: String {
+    /// paste (e.g. "send" to submit in a terminal or chat box). Off (empty)
+    /// until the user sets one, for every dictation path: a wake-word
+    /// default would let ambient audio (a TV, a call) say the wake phrase
+    /// then "send" and press Return in the focused app, terminals included.
+    // ponytail: handsFree is unused today; kept so callers name the path
+    // and the tests pin the wake-word case to off.
+    static func sendWord(handsFree: Bool) -> String {
         (defaults.string(forKey: sendWordKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

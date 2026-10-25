@@ -346,12 +346,12 @@ struct SettingsView: View {
                 : "Off — dictation starts only from the pill or hotkey.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("Send word", text: $sendWord, prompt: Text("send"))
+            TextField("Send word", text: $sendWord, prompt: Text("Off"))
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
             Text(sendWord.trimmingCharacters(in: .whitespaces).isEmpty
-                ? "Off — set a word to press Return after pasting when a dictation ends with it."
-                : "Ending a dictation with \"\(sendWord.trimmingCharacters(in: .whitespaces))\" pastes the rest and presses Return. Say it alone to just press Return. With the wake word on too, anything your mic hears (a video, a call on speakers) can submit text in the focused app, a terminal included.")
+                ? "Off until you set a word. The send word presses Return in the focused app, terminals included."
+                : "Ending a dictation with \"\(sendWord.trimmingCharacters(in: .whitespaces))\" pastes the rest and presses Return. Say it alone to just press Return. With the wake word on too, anything your mic hears (a video, a call on speakers) can submit text in the focused app, a terminal included. A change applies from the next dictation, not one already recording.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

@@ -43,6 +43,40 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings.cleanupMode, .off)
     }
 
+    // MARK: - Send word (#83)
+
+    /// Unwritten key = off for every dictation path, wake word included:
+    /// ambient audio saying the wake phrase then "send" must never press
+    /// Return in the focused app unless the user set a send word.
+    func testUnwrittenSendWordIsOffWhenHandsFree() {
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "")
+    }
+
+    func testUnwrittenSendWordIsOffForManualDictation() {
+        XCTAssertEqual(AppSettings.sendWord(handsFree: false), "")
+    }
+
+    /// A word the user set applies to every dictation.
+    func testStoredSendWordAppliesToBothModes() {
+        defaults.set("over", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord(handsFree: false), "over")
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "over")
+    }
+
+    /// Clearing the field stores "", which must stay off rather than fall
+    /// back to the default.
+    func testExplicitlyClearedSendWordStaysOff() {
+        defaults.set("", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "")
+        defaults.set("   ", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord(handsFree: true), "")
+    }
+
+    func testStoredSendWordIsTrimmed() {
+        defaults.set("  over and out \n", forKey: AppSettings.sendWordKey)
+        XCTAssertEqual(AppSettings.sendWord(handsFree: false), "over and out")
+    }
+
     // MARK: - Stale-value migration
     //
     // A tone preset stored by an older version can stop parsing when the
