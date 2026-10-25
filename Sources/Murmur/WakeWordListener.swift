@@ -16,11 +16,18 @@ final class WakeWordListener {
     private let recorder = AudioRecorder(accumulates: false)
     private var state = WakeListenerState()
     private var transcribing = false
+    /// Mic-open retries since the last successful start (`WakeRetry`).
+    private var retries = 0
+    /// A retry waiting out its delay. Cancelled by `apply()`, so a Settings
+    /// change meanwhile doesn't fork a second retry chain.
+    private var retryTask: Task<Void, Never>?
 
     private init() {}
 
     /// Re-sync with settings (launch and Settings changes).
     func apply() {
+        retryTask?.cancel()
+        retryTask = nil
         if state.shouldListen(enabled: AppSettings.wakeWordEnabled) {
             start()
         } else {
@@ -61,6 +68,7 @@ final class WakeWordListener {
                     apply()
                     return
                 }
+                retries = 0
                 Log.log("wake: listening for \"\(AppSettings.wakePhrase)\"")
             } catch {
                 guard state.failed(generation: myGeneration) == .current else {
@@ -68,12 +76,25 @@ final class WakeWordListener {
                     return
                 }
                 Log.log("wake: could not open the mic: \(error.localizedDescription)")
+                if let delay = WakeRetry.delay(after: error, attempt: retries) {
+                    retries += 1
+                    Log.log("wake: retrying in \(Int(delay))s (attempt \(retries))")
+                    retryTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        // A pause/stop or an apply() meanwhile owns what happens next.
+                        guard let self, !Task.isCancelled, self.state.generation == myGeneration else { return }
+                        self.apply()
+                    }
+                    return
+                }
+                retries = 0
                 AppStatus.shared.report("Wake word is off: \(error.localizedDescription)")
             }
         }
     }
 
     private func stop() {
+        retries = 0
         recorder.onChunk = nil
         recorder.onAutoStop = nil
         // A start in flight sees the bumped generation and stops itself.
