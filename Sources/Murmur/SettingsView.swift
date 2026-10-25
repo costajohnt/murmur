@@ -156,6 +156,11 @@ struct SettingsView: View {
                 await refreshModels()
             } catch is CancellationError {
                 // User cancelled; back to the Download button.
+            } catch OllamaClient.OllamaError.badStatus(let code, let body) {
+                // A pull sends only the model name, so Ollama's reason ("file
+                // does not exist") is safe to show here; the log keeps the code.
+                pullError = "Ollama HTTP \(code): \(body.prefix(200))"
+                Log.log("settings: pull \(model) failed: HTTP \(code)")
             } catch {
                 pullError = error.localizedDescription
                 Log.log("settings: pull \(model) failed: \(error.localizedDescription)")

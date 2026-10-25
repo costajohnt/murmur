@@ -15,6 +15,7 @@ Click the floating pill (or an optional global hotkey), speak, and the cleaned-u
 - The optional update check (off by default, Settings > Startup) asks GitHub once a day for the latest release version and sends no dictation data.
 - Optional Vault Capture (off unless you enter a URL in Settings > Vault Capture) sends dictations that start with "note to self" to that server, and nothing else. See [Vault Capture](#vault-capture).
 - History (text + optional audio) lives in `~/Library/Application Support/Murmur/`, on your disk only, with automatic retention pruning.
+- Copy in History is a private copy, like a dictation's paste: it stays on this Mac (no Universal Clipboard) and clipboard managers are asked not to record it.
 
 ## How it works
 

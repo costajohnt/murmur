@@ -21,8 +21,12 @@ final class AudioRecorder {
     /// input device itself posts a configuration-change notification — without
     /// it the observer below would tear down the engine `start()` is still
     /// setting up.
-    private enum RecordingState { case idle, starting, recording }
+    enum RecordingState { case idle, starting, recording }
     private var recordingState: RecordingState = .idle
+    /// Guarded by `lock`. Set when a route change stops a recording, so the
+    /// following `stop()` also resets the engine. Without the reset the next
+    /// `start()` built its tap on the graph from before the change (#57).
+    private var needsEngineReset = false
     /// Guarded by `lock`. When `engine.start()` returned for this recording.
     private var engineStartedAt: Date?
     /// Starting an engine on a freshly bound device posts one more
@@ -100,11 +104,14 @@ final class AudioRecorder {
     }
     private var _onChunk: (([Float]) -> Void)?
     /// `smoothedLevel` above and `recordStartTime`/`silenceStartTime`/
-    /// `didFireAutoStop`/`silenceAutoStopDuration` below are written on the
+    /// `noiseFloor`/`didFireAutoStop`/`silenceAutoStopDuration` below are written on the
     /// main actor in `start()` and read/written on the audio thread in
     /// `updateLevel()`, so every access to them goes through `lock`.
     private var recordStartTime: Date?
     private var silenceStartTime: Date?
+    /// Running estimate of the room's level, same 0..1 space as
+    /// `smoothedLevel`. nil until the first chunk of a recording.
+    private var noiseFloor: Float?
     private var didFireAutoStop = false
     /// Snapshotted from AppSettings at `start()` so the audio thread never
     /// touches UserDefaults mid-recording. 0 disables auto-stop.
@@ -122,9 +129,34 @@ final class AudioRecorder {
     /// Near-silence, for auto-stop purposes: a small margin above dbFloor so
     /// room tone / mic hiss (which sits at the floor) doesn't need to hit
     /// literal zero to count as "silence". Expressed in the same normalized
-    /// 0..1 space as `smoothedLevel`.
+    /// 0..1 space as `smoothedLevel`. The lowest the threshold goes; in a
+    /// noisier room it follows the measured floor instead (#82).
     private static let silenceMarginDb: Float = 5
-    private static let silenceThreshold: Float = silenceMarginDb / (dbCeiling - dbFloor)
+    static let fixedSilenceThreshold: Float = silenceMarginDb / (dbCeiling - dbFloor)
+    /// Room tone above the fixed cutoff (an ordinary room on a laptop mic sits
+    /// around -30 dBFS) never counted as silence, so auto-stop never fired
+    /// (#82). Silence is instead anything within this margin of the measured
+    /// noise floor. 8 dB clears the floor tracker's bias toward the quiet
+    /// dips of the room tone and stays well under speech.
+    static let silenceMarginAboveFloor: Float = 8 / (dbCeiling - dbFloor)
+    /// The floor rises only this fast (1 dB/s), so speech barely lifts it and
+    /// pauses pull it back down.
+    static let noiseFloorRisePerSecond: Float = 1 / (dbCeiling - dbFloor)
+    /// The floor falls toward a quieter level at most this fast (30 dB/s):
+    /// fast enough that a 300 ms pause between phrases pulls it back to the
+    /// room, so speech never parks it at the cap, but not instantly, so the
+    /// few chunks the smoothed level needs to climb back after a dropout cost
+    /// only a dB or two.
+    static let noiseFloorDropPerSecond: Float = 30 / (dbCeiling - dbFloor)
+    /// Digital silence: a muted mic or a Bluetooth profile switch delivers
+    /// zeros, far under any real room. The floor ignores those chunks, of
+    /// any length; following them would drop it to the bottom of the meter,
+    /// and at 1 dB/s it takes ~11 s to climb back over the #82 room tone.
+    static let dropoutDb: Float = -90
+    /// -32 dBFS: louder "room tone" is more likely sustained speech. The
+    /// threshold above it (-24 dBFS) stays 9 dB under -15 dBFS speech and
+    /// still covers the #82 room (-30.6 dBFS, a few dB of jitter).
+    static let maxNoiseFloor: Float = 18 / (dbCeiling - dbFloor)
     /// Never auto-stop this early — the user hasn't necessarily started
     /// talking yet.
     private static let silenceGraceSeconds: TimeInterval = 1.5
@@ -184,7 +216,26 @@ final class AudioRecorder {
         var didStart = false
         defer { setRecordingState(didStart ? .recording : .idle) }
 
+        resetEngineIfRouteStopped()
         resetForNewRecording(silenceAutoStop: silenceAutoStop ?? AppSettings.silenceAutoStopSeconds)
+        do {
+            try await startEngine()
+            didStart = true
+        } catch {
+            // A failed start leaves whatever graph made it fail (a tap format
+            // mismatch on a stale input node, #57). Without a reset every
+            // retry materializes the same node and fails the same way until
+            // an unrelated route change arrives while idle.
+            resetEngine("engine reset after failed start")
+            Log.log("recorder: start failed, engine reset")
+            throw error
+        }
+    }
+
+    /// The graph half of `start()`: everything that can raise on a stale
+    /// engine.
+    @MainActor
+    private func startEngine() async throws {
 
         // A previous recording can leave the engine running (e.g. stop() ran
         // while the hardware was mid-reset, or a device change restarted it
@@ -223,12 +274,12 @@ final class AudioRecorder {
         // materialized on (AirPods Max in HFP run at 24 kHz, the built-in mic
         // at 48 kHz), `outputFormat` still reports the old rate, and a tap in
         // that format raises "Failed to create tap due to format mismatch".
-        var inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
-        for _ in 0..<20 where inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
+        var tapFormat = Self.tapFormat(hardware: try catchingNSException("input format") { input.inputFormat(forBus: 0) })
+        for _ in 0..<20 where tapFormat == nil {
             try await Task.sleep(for: .milliseconds(100))
-            inputFormat = try catchingNSException("input format") { input.inputFormat(forBus: 0) }
+            tapFormat = Self.tapFormat(hardware: try catchingNSException("input format") { input.inputFormat(forBus: 0) })
         }
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+        guard let inputFormat = tapFormat else {
             throw RecorderError.deviceNotReady
         }
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
@@ -250,7 +301,6 @@ final class AudioRecorder {
         }
         try engine.start()
         lock.withLock { engineStartedAt = Date() }
-        didStart = true
     }
 
     private func resetForNewRecording(silenceAutoStop: TimeInterval) {
@@ -261,6 +311,7 @@ final class AudioRecorder {
         smoothedLevel = 0
         recordStartTime = Date()
         silenceStartTime = nil
+        noiseFloor = nil
         didFireAutoStop = false
         silenceAutoStopDuration = silenceAutoStop
     }
@@ -269,46 +320,115 @@ final class AudioRecorder {
         lock.withLock { recordingState = state }
     }
 
+    /// The format to install the tap and build the converter with: the input
+    /// node's hardware side (`inputFormat(forBus:)`), never its output side,
+    /// which keeps the rate of the device the node was materialized on (#57).
+    /// nil while the device reports no usable format (Bluetooth mid-handoff).
+    static func tapFormat(hardware: AVAudioFormat) -> AVAudioFormat? {
+        hardware.sampleRate > 0 && hardware.channelCount > 0 ? hardware : nil
+    }
+
+    enum ConfigurationChangeAction: Equatable {
+        /// The echo of our own device bind.
+        case ignore
+        /// The recording already stopped itself (silence, length cap, or an
+        /// earlier route change) and its `stop()` has not run yet: no second
+        /// auto-stop, but that `stop()` still resets the engine.
+        case resetAfterAutoStop
+        /// Starting an engine on a freshly bound device posts one more change
+        /// shortly after `start()` returns while audio keeps flowing.
+        case keepThroughStartEcho
+        /// The route changed under a live recording: auto-stop it, and reset
+        /// the engine in the `stop()` that follows.
+        case stopRecording
+        /// Idle: drop the stale graph so the next `start()` rebuilds it.
+        case resetEngine
+
+        /// The `stop()` that follows must reset the engine (#57).
+        var resetsEngineOnStop: Bool {
+            self == .stopRecording || self == .resetAfterAutoStop
+        }
+    }
+
+    /// What `handleConfigurationChange` does, pure so it can be tested without
+    /// an engine.
+    static func configurationChangeAction(
+        state: RecordingState,
+        didFireAutoStop: Bool,
+        secondsSinceEngineStart: TimeInterval?,
+        engineRunning: Bool
+    ) -> ConfigurationChangeAction {
+        switch state {
+        case .idle:
+            return .resetEngine
+        case .starting:
+            return .ignore
+        case .recording:
+            if didFireAutoStop { return .resetAfterAutoStop }
+            if let secondsSinceEngineStart, secondsSinceEngineStart < startEchoWindow, engineRunning {
+                return .keepThroughStartEcho
+            }
+            return .stopRecording
+        }
+    }
+
     /// Hopped onto the main actor from the configuration-change observer, so
     /// it never interleaves with start()/stop(); the state checks below see
     /// whatever those left behind.
     @MainActor
     private func handleConfigurationChange() {
-        let stopForDeviceChange: Bool = {
-            lock.lock()
-            defer { lock.unlock() }
-            // .starting means this notification is the echo of our own device
-            // binding, not a route change to react to.
-            guard recordingState == .recording, !didFireAutoStop else { return false }
-            if let engineStartedAt,
-               Date().timeIntervalSince(engineStartedAt) < Self.startEchoWindow,
-               engine.isRunning {
-                Log.log("recorder: configuration change right after start, engine still running; keeping the recording")
-                return false
-            }
-            didFireAutoStop = true
-            return true
-        }()
-        if stopForDeviceChange {
+        let action: ConfigurationChangeAction = lock.withLock {
+            let action = Self.configurationChangeAction(
+                state: recordingState,
+                didFireAutoStop: didFireAutoStop,
+                secondsSinceEngineStart: engineStartedAt.map { Date().timeIntervalSince($0) },
+                engineRunning: engine.isRunning
+            )
+            if action == .stopRecording { didFireAutoStop = true }
+            if action.resetsEngineOnStop { needsEngineReset = true }
+            return action
+        }
+        switch action {
+        case .ignore:
+            break
+        case .resetAfterAutoStop:
+            Log.log("recorder: audio route changed after auto-stop; engine resets on stop")
+        case .keepThroughStartEcho:
+            Log.log("recorder: configuration change right after start, engine still running; keeping the recording")
+        case .stopRecording:
             Log.log("recorder: audio route changed mid-recording, stopping")
             onAutoStop?(.deviceChanged)
-            return
+        case .resetEngine:
+            // Idle: drop the stale graph so the next start() rebuilds it against
+            // the current devices instead of the ones present when it was first
+            // materialized.
+            resetEngine("engine reset after route change")
+            Log.log("recorder: audio route changed while idle, engine reset")
         }
-        guard recordingStateIsIdle else { return }
-        // Idle: drop the stale graph so the next start() rebuilds it against
-        // the current devices instead of the ones present when it was first
-        // materialized.
-        _ = try? catchingNSException("engine reset after route change") {
+    }
+
+    /// A route change ended the last recording: rebuild the graph, the same
+    /// reset the idle branch does, so the next start() reads the formats of
+    /// the devices present then (#57). Runs from stop(), and again from
+    /// start() in case that stop never came.
+    @MainActor
+    private func resetEngineIfRouteStopped() {
+        let pending = lock.withLock {
+            let pending = needsEngineReset
+            needsEngineReset = false
+            return pending
+        }
+        guard pending else { return }
+        resetEngine("engine reset after route stop")
+        Log.log("recorder: engine reset after route-change stop")
+    }
+
+    @MainActor
+    private func resetEngine(_ step: String) {
+        _ = try? catchingNSException(step) {
             self.engine.stop()
             self.engine.reset()
         }
-        Log.log("recorder: audio route changed while idle, engine reset")
-    }
-
-    private var recordingStateIsIdle: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordingState == .idle
     }
 
     /// Runs `body`, turning an Objective-C NSException into a Swift error.
@@ -382,6 +502,7 @@ final class AudioRecorder {
             self.engine.inputNode.removeTap(onBus: 0)
             self.engine.stop()
         }
+        resetEngineIfRouteStopped()
         // Only now go idle. The configuration-change handler resets the engine
         // when it sees .idle (#50); it runs on the main actor now, so it can no
         // longer land inside this teardown either way.
@@ -461,20 +582,26 @@ final class AudioRecorder {
         let db = 20 * log10(max(rms, 1e-7))
         let normalized = min(max((db - Self.dbFloor) / (Self.dbCeiling - Self.dbFloor), 0), 1)
         let now = Date()
-        let (level, shouldFire): (Float, Bool) = lock.withLock {
-            let alpha = normalized > smoothedLevel ? Self.attackAlpha : Self.decayAlpha
-            smoothedLevel += alpha * (normalized - smoothedLevel)
-            guard !didFireAutoStop, let recordStartTime else { return (smoothedLevel, false) }
+        let chunkSeconds = TimeInterval(chunk.count) / Self.sampleRate
+        let (level, shouldFire, floor): (Float, Bool, Float) = lock.withLock {
+            smoothedLevel = Self.smoothedLevel(normalized, from: smoothedLevel)
+            let floor = Self.trackNoiseFloor(level: smoothedLevel, floor: noiseFloor, elapsed: chunkSeconds,
+                                             dropout: db <= Self.dropoutDb)
+            noiseFloor = floor
+            guard !didFireAutoStop, let recordStartTime else { return (smoothedLevel, false, floor) }
             let step = Self.silenceStep(
                 level: smoothedLevel, now: now, recordStart: recordStartTime,
-                silenceStart: silenceStartTime, duration: silenceAutoStopDuration
+                silenceStart: silenceStartTime, duration: silenceAutoStopDuration,
+                threshold: Self.silenceThreshold(noiseFloor: floor)
             )
             silenceStartTime = step.silenceStart
             if step.fire { didFireAutoStop = true }
-            return (smoothedLevel, step.fire)
+            return (smoothedLevel, step.fire, floor)
         }
         onLevel?(level)
         if shouldFire {
+            Log.log(String(format: "recorder: silence auto-stop, noise floor %.1f dB",
+                           Self.dbFloor + floor * (Self.dbCeiling - Self.dbFloor)))
             onAutoStop?(.silence)
         }
     }
@@ -491,12 +618,44 @@ final class AudioRecorder {
         silenceStart: Date?,
         duration: TimeInterval,
         grace: TimeInterval = silenceGraceSeconds,
-        threshold: Float = silenceThreshold
+        threshold: Float = fixedSilenceThreshold
     ) -> (fire: Bool, silenceStart: Date?) {
         guard duration > 0, now.timeIntervalSince(recordStart) >= grace else { return (false, silenceStart) }
         guard level <= threshold else { return (false, nil) }
         let start = silenceStart ?? now
         return (now.timeIntervalSince(start) >= duration, start)
+    }
+
+    /// Meter smoothing, pure so tests can drive the recorder's level path:
+    /// fast attack (bars jump on speech onset), slower decay.
+    static func smoothedLevel(_ normalized: Float, from previous: Float) -> Float {
+        let alpha = normalized > previous ? attackAlpha : decayAlpha
+        return previous + alpha * (normalized - previous)
+    }
+
+    /// One step of the noise-floor tracker, pure for the same reason as
+    /// `silenceStep`: falls toward a quieter level at most `dropRate` per
+    /// second, rises at most `riseRate`, never above `maxNoiseFloor`, and
+    /// holds still through a `dropout` chunk. The first chunk of a recording
+    /// seeds it.
+    static func trackNoiseFloor(
+        level: Float,
+        floor: Float?,
+        elapsed: TimeInterval,
+        dropout: Bool = false,
+        riseRate: Float = noiseFloorRisePerSecond,
+        dropRate: Float = noiseFloorDropPerSecond
+    ) -> Float {
+        guard let floor else { return min(level, maxNoiseFloor) }
+        if dropout { return floor }
+        if level < floor { return max(level, floor - dropRate * Float(elapsed)) }
+        return min(level, floor + riseRate * Float(elapsed), maxNoiseFloor)
+    }
+
+    /// Level at or below which audio counts as silence: `silenceMarginAboveFloor`
+    /// over the measured floor, never below the fixed quiet-room threshold.
+    static func silenceThreshold(noiseFloor: Float) -> Float {
+        max(fixedSilenceThreshold, noiseFloor + silenceMarginAboveFloor)
     }
 
     /// Writes samples to a 16-bit PCM WAV at 16 kHz mono.
