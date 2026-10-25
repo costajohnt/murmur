@@ -157,6 +157,13 @@ enum TextInjector {
         pasteboard.setData(Data(), forType: concealedType)
     }
 
+    /// History's Copy button. A transcript copied from history is the same
+    /// dictated text, so it gets the same private write: never relayed to
+    /// other devices or recorded by a clipboard manager.
+    nonisolated static func copyTranscript(_ text: String, to pasteboard: NSPasteboard) {
+        writeDictation(text, to: pasteboard)
+    }
+
     /// Only restore if nothing else touched the pasteboard during the paste
     /// window. If the user copied something, changeCount advanced past ours —
     /// leave their clipboard alone instead of clobbering it with the stale

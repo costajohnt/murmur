@@ -59,6 +59,14 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertTrue(types.contains(TextInjector.concealedType))
     }
 
+    func testHistoryCopyCarriesPrivacyMarkers() {
+        TextInjector.copyTranscript("from history", to: pasteboard)
+        XCTAssertEqual(pasteboard.string(forType: .string), "from history")
+        let types = pasteboard.types ?? []
+        XCTAssertTrue(types.contains(TextInjector.transientType))
+        XCTAssertTrue(types.contains(TextInjector.concealedType))
+    }
+
     func testRestoreSkippedWhenUserCopiedMidPaste() {
         pasteboard.clearContents()
         pasteboard.setString("original", forType: .string)
