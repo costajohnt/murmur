@@ -30,11 +30,10 @@ final class DictationCoordinator {
     private var stopWhenStarted = false
     private var targetApp: NSRunningApplication?
     private var recordStart: Date?
-    /// N2: auto-opening Setup on an Accessibility-missing paste failure should
-    /// fire at most once per app session — otherwise the window re-pops on
-    /// every dictation attempt while permission stays ungranted. The menubar
-    /// "Setup…" item and first-run onboarding are unaffected.
-    private var didAutoOpenOnboarding = false
+    /// When Setup was last auto-opened for an Accessibility-missing paste
+    /// failure; throttled by `DictationControl.setupAutoOpenCooldown` (audit
+    /// H1). The menubar "Setup…" item and first-run onboarding are unaffected.
+    private var lastAutoOpenedSetup: Date?
     /// A send-word check (transcribe-so-far on a pause) is running.
     private var checkingSendWord = false
     /// Read once at dictation start (it depends on how the dictation
@@ -127,6 +126,16 @@ final class DictationCoordinator {
         // stale frontmost read at paste time — v0 lesson).
         targetApp = TargetAppTracker.shared.lastActiveApp
         Log.log("record start: target = \(targetApp?.bundleIdentifier ?? "none") (\(targetApp?.localizedName ?? "-"))")
+
+        // Preflight (audit H1): a missing or stale Accessibility grant (a
+        // rebuilt binary no longer matches the row in System Settings) only
+        // surfaced at paste time, after the user had dictated and waited for
+        // ASR. Say so before they speak; the dictation still runs and lands
+        // in History.
+        if !AXIsProcessTrusted() {
+            Log.log("record start: Accessibility not granted, paste will fail")
+            AppStatus.shared.report(Self.accessibilityMissingMessage)
+        }
 
         // Live level → meter bars. Callback arrives on the audio thread;
         // hop to main for the @Published updates.
@@ -387,16 +396,19 @@ final class DictationCoordinator {
         Log.log("pipeline done: status = \(outcome.status.rawValue), history count = \(HistoryStore.shared?.count() ?? -1)")
     }
 
+    static let accessibilityMissingMessage = "Accessibility not granted, so dictations only go to History. Open Setup; if Murmur is already listed there, remove it, add it again, then relaunch."
+
     private func reportInjectFailure(_ error: String?) {
         if AXIsProcessTrusted() {
             AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
         } else {
-            // The dominant paste failure: Accessibility never granted.
-            // Surface it AND pop the setup guide so the user can fix it —
-            // but only once per session (N2), not on every attempt.
-            AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
-            if !didAutoOpenOnboarding {
-                didAutoOpenOnboarding = true
+            // The dominant paste failure: Accessibility never granted, or a
+            // stale grant from an earlier build. Surface it AND pop the
+            // setup guide, throttled (audit H1).
+            AppStatus.shared.report(Self.accessibilityMissingMessage)
+            let now = Date()
+            if DictationControl.shouldAutoOpenSetup(lastOpened: lastAutoOpenedSetup, now: now) {
+                lastAutoOpenedSetup = now
                 (NSApp.delegate as? AppDelegate)?.openOnboarding()
             }
         }

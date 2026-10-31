@@ -102,7 +102,9 @@ scripts/run.sh     # launch the built Murmur.app
 ```
 
 Ad-hoc builds change identity on every rebuild, so macOS asks for
-Microphone and Accessibility again each time. Run
+Microphone again each time, and the Accessibility row silently stops
+matching (System Settings still shows it on; remove Murmur from the list,
+add it again, then relaunch). Run
 `scripts/create-signing-cert.sh` once: it makes a local self-signed
 "Murmur Dev Signing" cert (no Keychain Access steps), and `build.sh` signs
 with it from then on so the grants stick.
