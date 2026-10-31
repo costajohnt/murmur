@@ -86,22 +86,34 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertEqual(consumed, 1)
     }
 
-    /// A clipboard manager reads the pasteboard the moment it changes, before
-    /// ⌘V is posted; that read must not count, or the restore fires early and
-    /// the target pastes the user's old clipboard.
-    func testReadBeforePasteIsPostedDoesNotCount() {
-        var window = TextInjector.PasteWindow()
-        let t0 = Date(timeIntervalSince1970: 1_000)
-        XCTAssertFalse(window.read(at: t0))
-        XCTAssertNil(window.lastReadAt)
+    /// A promise resolves once: the second reader gets the stored data and
+    /// the provider is not asked again, so there is exactly one signal.
+    func testPromiseResolvesOnlyOnce() {
+        var consumed = 0
+        TextInjector.writeDictation("dictated", to: pasteboard) { consumed += 1 }
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+        XCTAssertEqual(pasteboard.pasteboardItems?.first?.string(forType: .string), "dictated")
 
-        window.posted(at: t0.addingTimeInterval(0.01))
-        XCTAssertFalse(window.read(at: t0), "a read stamped before the post still does not count")
-        XCTAssertTrue(window.read(at: t0.addingTimeInterval(0.5)))
-        XCTAssertEqual(window.lastReadAt, t0.addingTimeInterval(0.5))
-        // A later read moves the restore out again (debounce).
-        XCTAssertTrue(window.read(at: t0.addingTimeInterval(3)))
-        XCTAssertEqual(window.lastReadAt, t0.addingTimeInterval(3))
+        let hop = expectation(description: "signals drained")
+        DispatchQueue.main.async { hop.fulfill() }
+        wait(for: [hop], timeout: 1)
+        XCTAssertEqual(consumed, 1)
+    }
+
+    /// A read within the bystander window of ⌘V (a clipboard manager polling
+    /// on change) falls back to the old timer from ⌘V; a later read is the
+    /// target's and restores the same grace after it. Never earlier than the
+    /// old 1.5 s.
+    func testRestoreDeadlineTreatsEarlyReadAsBystander() {
+        let posted = Date(timeIntervalSince1970: 1_000)
+        let grace = TextInjector.restoreGrace
+        let early = posted.addingTimeInterval(TextInjector.bystanderWindow / 2)
+        XCTAssertEqual(TextInjector.restoreDeadline(readAt: early, postedAt: posted), posted.addingTimeInterval(grace))
+        let late = posted.addingTimeInterval(3)
+        XCTAssertEqual(TextInjector.restoreDeadline(readAt: late, postedAt: posted), late.addingTimeInterval(grace))
+        XCTAssertEqual(TextInjector.restoreDeadline(readAt: early, postedAt: nil), early.addingTimeInterval(grace))
+        XCTAssertGreaterThanOrEqual(grace, 1.5)
     }
 
     /// The promised write path keeps the changeCount guard: a user copy after
