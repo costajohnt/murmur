@@ -32,10 +32,41 @@ final class ModelManifestTests: StubbedNetworkTestCase {
 
     func testMatchingFileIsKeptWithoutNetwork() async throws {
         try write("abc")
-        var progress: [(Int, Int)] = []
-        try await ModelManifest.populate([path: abc], in: tmp, session: stubbedURLSession()) { progress.append(($0, $1)) }
+        var progress: [(Int, Int, Bool)] = []
+        try await ModelManifest.populate([path: abc], in: tmp, session: stubbedURLSession()) { progress.append(($0, $1, $2)) }
         XCTAssertTrue(StubURLProtocol.requests.isEmpty)
         XCTAssertEqual(progress.map(\.0), [1])
+        XCTAssertEqual(progress.map(\.2), [false])
+    }
+
+    func testDownloadReportsInFlightThenDone() async throws {
+        stub(status: 200, body: "abc")
+        var progress: [(Int, Int, Bool)] = []
+        try await ModelManifest.populate([path: abc], in: tmp, session: stubbedURLSession()) { progress.append(($0, $1, $2)) }
+        XCTAssertEqual(progress.map(\.2), [true, false])
+        XCTAssertEqual(progress.map(\.0), [0, 1])
+    }
+
+    func testTransportErrorIsRetriedOnce() async throws {
+        let attempts = Counter()
+        StubURLProtocol.handler = { request in
+            if attempts.next() == 1 { throw URLError(.networkConnectionLost) }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("abc".utf8))
+        }
+        try await ModelManifest.populate([path: abc], in: tmp, session: stubbedURLSession())
+        XCTAssertEqual(attempts.next(), 3, "exactly one retry")
+        XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent(path), encoding: .utf8), "abc")
+    }
+
+    func testTransportErrorTwiceSurfaces() async throws {
+        StubURLProtocol.handler = { _ in throw URLError(.networkConnectionLost) }
+        do {
+            try await ModelManifest.populate([path: abc], in: tmp, session: stubbedURLSession())
+            XCTFail("expected the second failure to surface")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .networkConnectionLost)
+        }
+        XCTAssertEqual(StubURLProtocol.requests.count, 2)
     }
 
     func testMissingOrChangedFileIsFetchedFromThePinnedRevision() async throws {
@@ -65,7 +96,7 @@ final class ModelManifestTests: StubbedNetworkTestCase {
             try await ModelManifest.populate([path: abc], in: tmp, session: stubbedURLSession())
             XCTFail("expected a download failure")
         } catch let error as ModelManifest.Mismatch {
-            XCTAssertTrue(error.localizedDescription.contains("HTTP 404"))
+            XCTAssertTrue(error.localizedDescription.contains("huggingface.co (HTTP 404)"), error.localizedDescription)
         }
     }
 
@@ -80,4 +111,11 @@ final class ModelManifestTests: StubbedNetworkTestCase {
         XCTAssertTrue(ModelManifest.parakeetV2.values.allSatisfy { $0.count == 64 })
         XCTAssertEqual(ModelManifest.pinnedRevision.count, 40)
     }
+}
+
+/// Lock-guarded attempt counter for handlers, which run on URLSession's thread.
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func next() -> Int { lock.withLock { value += 1; return value } }
 }

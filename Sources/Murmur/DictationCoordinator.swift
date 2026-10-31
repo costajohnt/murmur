@@ -458,11 +458,11 @@ final class DictationCoordinator {
                 // hashing (~460 MB) and any download run off the main actor.
                 let dir = AsrModels.defaultCacheDirectory(for: .v2)
                 try await Task.detached(priority: .userInitiated) {
-                    try await ModelManifest.populate(in: dir) { done, total in
+                    try await ModelManifest.populate(in: dir) { done, total, inFlight in
                         Task { @MainActor in
                             switch state.asrModel {
                             case .ready, .failed: return
-                            default: state.asrModel = .downloading(Double(done) / Double(total))
+                            default: state.asrModel = .downloading(inFlight ? nil : Double(done) / Double(total))
                             }
                         }
                     }

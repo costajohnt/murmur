@@ -54,26 +54,28 @@ enum ModelManifest {
 
     /// Makes `dir` hold exactly `manifest`: a file that already matches is
     /// kept, anything missing or different is fetched from `revision` and
-    /// verified before it replaces the old file. `progress` gets
-    /// (files done, files total).
+    /// verified before it replaces the old file. `progress` gets (files
+    /// done, files total, a download in flight); in flight means
+    /// indeterminate, since one file is 445 MB and most are tiny.
     static func populate(
         _ manifest: [String: String] = parakeetV2,
         in dir: URL,
         revision: String = pinnedRevision,
         session: URLSession = .shared,
-        progress: ((Int, Int) -> Void)? = nil
+        progress: ((Int, Int, Bool) -> Void)? = nil
     ) async throws {
         let fm = FileManager.default
         let entries = manifest.sorted { $0.key < $1.key }
         for (index, (path, expected)) in entries.enumerated() {
             let file = dir.appendingPathComponent(path)
             if (try? sha256(of: file)) != expected {
+                progress?(index, entries.count, true)
                 let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(revision)/\(path)")!
-                let (downloaded, response) = try await session.download(from: url)
+                let (downloaded, response) = try await download(url, with: session)
                 defer { try? fm.removeItem(at: downloaded) }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard status == 200 else {
-                    throw Mismatch(path: path, reason: "could not be downloaded (HTTP \(status))")
+                    throw Mismatch(path: path, reason: "could not be downloaded from \(response.url?.host ?? url.host ?? "?") (HTTP \(status))")
                 }
                 guard try sha256(of: downloaded) == expected else {
                     throw Mismatch(path: path, reason: "downloaded from the pinned revision but does not match its checksum")
@@ -82,7 +84,18 @@ enum ModelManifest {
                 if fm.fileExists(atPath: file.path) { try fm.removeItem(at: file) }
                 try fm.moveItem(at: downloaded, to: file)
             }
-            progress?(index + 1, entries.count)
+            progress?(index + 1, entries.count, false)
+        }
+    }
+
+    /// One retry on a transport error: a dropped connection mid-file is the
+    /// common failure on a 445 MB download and costs the user a relaunch
+    /// otherwise. Anything persistent surfaces on the second attempt.
+    private static func download(_ url: URL, with session: URLSession) async throws -> (URL, URLResponse) {
+        do {
+            return try await session.download(from: url)
+        } catch let error as URLError where error.code != .cancelled {
+            return try await session.download(from: url)
         }
     }
 
