@@ -263,8 +263,13 @@ final class HistoryStore {
     /// Application Support tree.
     init(container: ModelContainer, legacyDir: URL = HistoryStore.legacySupportDir, supportDir: URL = HistoryStore.supportDir) {
         self.container = container
+        self.audioDir = supportDir.appendingPathComponent("audio", isDirectory: true)
         relinkAudioPaths(from: legacyDir, to: supportDir)
     }
+
+    /// The audio dir this instance sweeps; derived from `supportDir` so tests
+    /// never touch the real one.
+    private let audioDir: URL
 
     private convenience init() throws {
         Self.migrateLegacyDataIfNeeded()
@@ -382,6 +387,40 @@ final class HistoryStore {
         if changed {
             save()
         }
+
+        var kept = Set<String>()
+        for entry in all.prefix(Self.maxEntries) {
+            if let path = entry.audioPath { kept.insert(URL(fileURLWithPath: path).lastPathComponent) }
+        }
+        let swept = Self.sweepAudio(in: audioDir, keeping: kept, now: now)
+        if swept > 0 {
+            Log.log("history: swept \(swept) orphaned audio files")
+        }
+    }
+
+    /// Orphan sweep (audit M2): a WAV is written before ASR and only gets a
+    /// row once the pipeline finishes, so a crash mid-pipeline, a row delete
+    /// whose file delete threw, or running with no store at all (then this
+    /// never runs; see `DictationCoordinator.process`) can leave files that
+    /// `prune` never sees. Deletes `.wav` files in `dir` not in `keeping`
+    /// (file names) and at least `minAge` old; the age guard protects a WAV
+    /// whose row has not landed yet. Kept files are tightened to 0600, which
+    /// covers WAVs written before #71. Returns how many were deleted.
+    @discardableResult
+    nonisolated static func sweepAudio(in dir: URL, keeping: Set<String>, now: Date = Date(), minAge: TimeInterval = 3600) -> Int {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return 0 }
+        var deleted = 0
+        for file in files where file.pathExtension == "wav" {
+            if keeping.contains(file.lastPathComponent) {
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                continue
+            }
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? now
+            guard now.timeIntervalSince(modified) >= minAge else { continue }
+            if (try? fm.removeItem(at: file)) != nil { deleted += 1 }
+        }
+        return deleted
     }
 
     /// New WAV destination for a dictation's audio.

@@ -258,15 +258,20 @@ final class DictationCoordinator {
             return
         }
 
-        // Persist audio first (usable even if ASR fails).
+        // Persist audio first (usable even if ASR fails). Not without a
+        // store: nothing would ever reference or prune the file (audit M2).
         let entryId = UUID()
         var audioPath: String?
-        do {
-            let url = HistoryStore.audioURL(for: entryId)
-            try AudioRecorder.writeWav(samples, to: url)
-            audioPath = url.path
-        } catch {
-            Log.log("pipeline: audio save failed (continuing): \(error)")
+        if HistoryStore.shared == nil {
+            Log.log("pipeline: no history store, not saving audio")
+        } else {
+            do {
+                let url = HistoryStore.audioURL(for: entryId)
+                try AudioRecorder.writeWav(samples, to: url)
+                audioPath = url.path
+            } catch {
+                Log.log("pipeline: audio save failed (continuing): \(error)")
+            }
         }
 
         // 1. ASR

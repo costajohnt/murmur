@@ -116,6 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let failure = HistoryStore.openFailure {
             AppStatus.shared.report(failure)
         }
+        // Retention otherwise only runs on the next dictation, so a user who
+        // stops dictating keeps 30-day-old audio forever (audit M2).
+        HistoryStore.shared?.prune()
         _ = TargetAppTracker.shared // start tracking activations immediately
         showPill()
         #if DEBUG && MURMUR_DEV_HOOKS
