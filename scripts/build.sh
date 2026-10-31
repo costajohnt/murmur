@@ -4,6 +4,9 @@
 # By default the app is ad-hoc signed, so this works on a fresh clone with
 # no Apple certificate. To sign with a real cert, set:
 #   DEVELOPMENT_TEAM=XXXXXXXXXX [CODE_SIGN_IDENTITY="Apple Development"] scripts/build.sh
+# The DistributedNotificationCenter test hooks (DevTestHooks.swift) are off
+# unless you ask for them, since any local process can post to them:
+#   MURMUR_DEV_HOOKS=1 scripts/build.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -13,6 +16,9 @@ APP="build/DerivedData/Build/Products/Debug/Murmur.app"
 DEV_CERT="Murmur Dev Signing"
 
 SIGN_ARGS=()
+if [[ -n "${MURMUR_DEV_HOOKS:-}" ]]; then
+  SIGN_ARGS+=(SWIFT_ACTIVE_COMPILATION_CONDITIONS="DEBUG MURMUR_DEV_HOOKS")
+fi
 if [[ -n "${DEVELOPMENT_TEAM:-}" ]]; then
   SIGN_ARGS+=(
     DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"

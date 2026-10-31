@@ -118,11 +118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         _ = TargetAppTracker.shared // start tracking activations immediately
         showPill()
-        #if DEBUG
+        #if DEBUG && MURMUR_DEV_HOOKS
         // Dev-only: system-wide DistributedNotificationCenter hooks that can
-        // trigger recording/injection/history mutation. NEVER registered in
-        // release builds — any local process could
-        // post these notifications.
+        // trigger recording/injection/history mutation. Any local process
+        // could post these notifications, so they need an explicit opt-in
+        // flag on top of DEBUG (audit M4): MURMUR_DEV_HOOKS=1 scripts/build.sh
         registerTestHooks()
         #endif
         DictationCoordinator.shared.preloadAsr()
