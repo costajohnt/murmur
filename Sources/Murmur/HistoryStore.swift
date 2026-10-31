@@ -388,6 +388,10 @@ final class HistoryStore {
             save()
         }
 
+        // Not after a store reset: the archived rows are not in this store,
+        // so every WAV they reference would look orphaned. Those files stay
+        // beside the archive for hand recovery.
+        guard Self.openFailure == nil else { return }
         var kept = Set<String>()
         for entry in all.prefix(Self.maxEntries) {
             if let path = entry.audioPath { kept.insert(URL(fileURLWithPath: path).lastPathComponent) }
