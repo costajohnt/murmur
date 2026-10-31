@@ -67,6 +67,25 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertTrue(types.contains(TextInjector.concealedType))
     }
 
+    /// Audit M1: the paste path promises the string, so a reader's request
+    /// for it is the consumption signal that gates the clipboard restore.
+    func testPromisedDictationResolvesOnReadAndSignals() {
+        var consumed = 0
+        TextInjector.writeDictation("dictated", to: pasteboard) { consumed += 1 }
+        let types = pasteboard.types ?? []
+        XCTAssertTrue(types.contains(.string))
+        XCTAssertTrue(types.contains(TextInjector.transientType))
+        XCTAssertTrue(types.contains(TextInjector.concealedType))
+        XCTAssertEqual(consumed, 0, "not read yet")
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+
+        let hop = expectation(description: "signal hops to main")
+        DispatchQueue.main.async { hop.fulfill() }
+        wait(for: [hop], timeout: 1)
+        XCTAssertEqual(consumed, 1)
+    }
+
     func testRestoreSkippedWhenUserCopiedMidPaste() {
         pasteboard.clearContents()
         pasteboard.setString("original", forType: .string)
