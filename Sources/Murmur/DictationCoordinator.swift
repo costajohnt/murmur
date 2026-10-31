@@ -443,7 +443,7 @@ final class DictationCoordinator {
             state.asrModel = .loading
             do {
                 let start = Date()
-                let models = try await AsrModels.downloadAndLoad(version: .v2) { progress in
+                let onProgress: DownloadUtils.ProgressHandler = { progress in
                     let next = Self.modelState(for: progress)
                     Task { @MainActor in
                         // Hops can land after the load settled; don't regress.
@@ -453,6 +453,12 @@ final class DictationCoordinator {
                         }
                     }
                 }
+                // Download, then verify the cache against the pinned
+                // checksums before CoreML parses anything (audit M3). The
+                // hashing (~460 MB) runs off the main actor.
+                let dir = try await AsrModels.download(version: .v2, progressHandler: onProgress)
+                try await Task.detached(priority: .userInitiated) { try ModelManifest.verify(in: dir) }.value
+                let models = try await AsrModels.load(from: dir, version: .v2, progressHandler: onProgress)
                 let manager = AsrManager(config: .default)
                 try await manager.loadModels(models)
                 Log.log(String(format: "asr: models ready in %.2fs", Date().timeIntervalSince(start)))
