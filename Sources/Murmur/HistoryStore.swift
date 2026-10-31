@@ -176,6 +176,13 @@ final class HistoryStore {
             try? fm.removeItem(at: archive)
             throw StoreRecoveryError.nothingToArchive
         }
+        // The WAVs belong to the archived rows; left in place they would
+        // look orphaned to the sweep in `prune` once a fresh store opens.
+        // `init` recreates audio/ for the fresh store.
+        let audio = dir.appendingPathComponent("audio", isDirectory: true)
+        if fm.fileExists(atPath: audio.path) {
+            try fm.moveItem(at: audio, to: archive.appendingPathComponent("audio", isDirectory: true))
+        }
         return archive
     }
 
@@ -388,10 +395,6 @@ final class HistoryStore {
             save()
         }
 
-        // Not after a store reset: the archived rows are not in this store,
-        // so every WAV they reference would look orphaned. Those files stay
-        // beside the archive for hand recovery.
-        guard Self.openFailure == nil else { return }
         var kept = Set<String>()
         for entry in all.prefix(Self.maxEntries) {
             if let path = entry.audioPath { kept.insert(URL(fileURLWithPath: path).lastPathComponent) }
