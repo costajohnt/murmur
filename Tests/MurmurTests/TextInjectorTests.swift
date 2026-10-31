@@ -67,6 +67,82 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertTrue(types.contains(TextInjector.concealedType))
     }
 
+    /// Audit M1: the paste path promises the string, so a reader's request
+    /// for it is the consumption signal that gates the clipboard restore.
+    func testPromisedDictationResolvesOnReadAndSignals() {
+        var consumed = 0
+        TextInjector.writeDictation("dictated", to: pasteboard) { consumed += 1 }
+        let types = pasteboard.types ?? []
+        XCTAssertTrue(types.contains(.string))
+        XCTAssertTrue(types.contains(TextInjector.transientType))
+        XCTAssertTrue(types.contains(TextInjector.concealedType))
+        XCTAssertEqual(consumed, 0, "not read yet")
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+
+        let hop = expectation(description: "signal hops to main")
+        DispatchQueue.main.async { hop.fulfill() }
+        wait(for: [hop], timeout: 1)
+        XCTAssertEqual(consumed, 1)
+    }
+
+    /// A promise resolves once: the second reader gets the stored data and
+    /// the provider is not asked again, so there is exactly one signal.
+    func testPromiseResolvesOnlyOnce() {
+        var consumed = 0
+        TextInjector.writeDictation("dictated", to: pasteboard) { consumed += 1 }
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+        XCTAssertEqual(pasteboard.pasteboardItems?.first?.string(forType: .string), "dictated")
+
+        let hop = expectation(description: "signals drained")
+        DispatchQueue.main.async { hop.fulfill() }
+        wait(for: [hop], timeout: 1)
+        XCTAssertEqual(consumed, 1)
+    }
+
+    /// A read within the bystander window of ⌘V (a clipboard manager polling
+    /// on change) falls back to the old timer from ⌘V; a later read is the
+    /// target's and restores the same grace after it. Never earlier than the
+    /// old 1.5 s.
+    func testRestoreDeadlineTreatsEarlyReadAsBystander() {
+        let posted = Date(timeIntervalSince1970: 1_000)
+        let grace = TextInjector.restoreGrace
+        let early = posted.addingTimeInterval(TextInjector.bystanderWindow / 2)
+        XCTAssertEqual(TextInjector.restoreDeadline(readAt: early, postedAt: posted), posted.addingTimeInterval(grace))
+        let late = posted.addingTimeInterval(3)
+        XCTAssertEqual(TextInjector.restoreDeadline(readAt: late, postedAt: posted), late.addingTimeInterval(grace))
+        XCTAssertEqual(TextInjector.restoreDeadline(readAt: early, postedAt: nil), early.addingTimeInterval(grace))
+        XCTAssertGreaterThanOrEqual(grace, 1.5)
+    }
+
+    /// The promised write path keeps the changeCount guard: a user copy after
+    /// the target read the paste must not be clobbered by the restore.
+    func testPromisedWriteStillSkipsRestoreAfterUserCopy() {
+        pasteboard.clearContents()
+        pasteboard.setString("original", forType: .string)
+        let saved = TextInjector.snapshot(pasteboard)
+        TextInjector.writeDictation("dictated", to: pasteboard) {}
+        let ours = pasteboard.changeCount
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+
+        pasteboard.clearContents()
+        pasteboard.setString("user copy", forType: .string)
+
+        XCTAssertFalse(TextInjector.restoreIfUnchanged(pasteboard, items: saved, ourChangeCount: ours))
+        XCTAssertEqual(pasteboard.string(forType: .string), "user copy")
+    }
+
+    /// A second dictation while the first paste is still unread (slow
+    /// target) must wait, not close the first window: closing would restore
+    /// the clipboard under the first target's queued ⌘V and paste the second
+    /// text twice. Once the first paste was read, closing early is safe.
+    func testSecondInjectQueuesUntilTheFirstPasteWasRead() {
+        XCTAssertEqual(TextInjector.arrival(isInjecting: false, previousRead: false), .run)
+        XCTAssertEqual(TextInjector.arrival(isInjecting: true, previousRead: false), .queue)
+        XCTAssertEqual(TextInjector.arrival(isInjecting: true, previousRead: true), .closePreviousThenRun)
+    }
+
     func testRestoreSkippedWhenUserCopiedMidPaste() {
         pasteboard.clearContents()
         pasteboard.setString("original", forType: .string)

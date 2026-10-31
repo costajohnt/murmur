@@ -30,11 +30,10 @@ final class DictationCoordinator {
     private var stopWhenStarted = false
     private var targetApp: NSRunningApplication?
     private var recordStart: Date?
-    /// N2: auto-opening Setup on an Accessibility-missing paste failure should
-    /// fire at most once per app session — otherwise the window re-pops on
-    /// every dictation attempt while permission stays ungranted. The menubar
-    /// "Setup…" item and first-run onboarding are unaffected.
-    private var didAutoOpenOnboarding = false
+    /// When Setup was last auto-opened for an Accessibility-missing paste
+    /// failure; throttled by `DictationControl.setupAutoOpenCooldown` (audit
+    /// H1). The menubar "Setup…" item and first-run onboarding are unaffected.
+    private var lastAutoOpenedSetup: Date?
     /// A send-word check (transcribe-so-far on a pause) is running.
     private var checkingSendWord = false
     /// Read once at dictation start (it depends on how the dictation
@@ -127,6 +126,16 @@ final class DictationCoordinator {
         // stale frontmost read at paste time — v0 lesson).
         targetApp = TargetAppTracker.shared.lastActiveApp
         Log.log("record start: target = \(targetApp?.bundleIdentifier ?? "none") (\(targetApp?.localizedName ?? "-"))")
+
+        // Preflight (audit H1): a missing or stale Accessibility grant (a
+        // rebuilt binary no longer matches the row in System Settings) only
+        // surfaced at paste time, after the user had dictated and waited for
+        // ASR. Say so before they speak; the dictation still runs and lands
+        // in History.
+        if !AXIsProcessTrusted() {
+            Log.log("record start: Accessibility not granted, paste will fail")
+            AppStatus.shared.report(Self.accessibilityMissingMessage)
+        }
 
         // Live level → meter bars. Callback arrives on the audio thread;
         // hop to main for the @Published updates.
@@ -258,15 +267,20 @@ final class DictationCoordinator {
             return
         }
 
-        // Persist audio first (usable even if ASR fails).
+        // Persist audio first (usable even if ASR fails). Not without a
+        // store: nothing would ever reference or prune the file (audit M2).
         let entryId = UUID()
         var audioPath: String?
-        do {
-            let url = HistoryStore.audioURL(for: entryId)
-            try AudioRecorder.writeWav(samples, to: url)
-            audioPath = url.path
-        } catch {
-            Log.log("pipeline: audio save failed (continuing): \(error)")
+        if HistoryStore.shared == nil {
+            Log.log("pipeline: no history store, not saving audio")
+        } else {
+            do {
+                let url = HistoryStore.audioURL(for: entryId)
+                try AudioRecorder.writeWav(samples, to: url)
+                audioPath = url.path
+            } catch {
+                Log.log("pipeline: audio save failed (continuing): \(error)")
+            }
         }
 
         // 1. ASR
@@ -382,16 +396,19 @@ final class DictationCoordinator {
         Log.log("pipeline done: status = \(outcome.status.rawValue), history count = \(HistoryStore.shared?.count() ?? -1)")
     }
 
+    static let accessibilityMissingMessage = "Accessibility not granted, so dictations only go to History. Open Setup; if Murmur is already listed there, remove it, add it again, then relaunch."
+
     private func reportInjectFailure(_ error: String?) {
         if AXIsProcessTrusted() {
             AppStatus.shared.report("Couldn't paste the transcript: \(error ?? "unknown error").")
         } else {
-            // The dominant paste failure: Accessibility never granted.
-            // Surface it AND pop the setup guide so the user can fix it —
-            // but only once per session (N2), not on every attempt.
-            AppStatus.shared.report("Accessibility permission needed to paste. Open Setup to grant it.")
-            if !didAutoOpenOnboarding {
-                didAutoOpenOnboarding = true
+            // The dominant paste failure: Accessibility never granted, or a
+            // stale grant from an earlier build. Surface it AND pop the
+            // setup guide, throttled (audit H1).
+            AppStatus.shared.report(Self.accessibilityMissingMessage)
+            let now = Date()
+            if DictationControl.shouldAutoOpenSetup(lastOpened: lastAutoOpenedSetup, now: now) {
+                lastAutoOpenedSetup = now
                 (NSApp.delegate as? AppDelegate)?.openOnboarding()
             }
         }
@@ -426,7 +443,7 @@ final class DictationCoordinator {
             state.asrModel = .loading
             do {
                 let start = Date()
-                let models = try await AsrModels.downloadAndLoad(version: .v2) { progress in
+                let onProgress: DownloadUtils.ProgressHandler = { progress in
                     let next = Self.modelState(for: progress)
                     Task { @MainActor in
                         // Hops can land after the load settled; don't regress.
@@ -436,6 +453,27 @@ final class DictationCoordinator {
                         }
                     }
                 }
+                // Fill FluidAudio's cache from the pinned revision, verifying
+                // every file, before CoreML parses anything (audit M3). The
+                // hashing (~460 MB) and any download run off the main actor.
+                let dir = AsrModels.defaultCacheDirectory(for: .v2)
+                try await Task.detached(priority: .userInitiated) {
+                    try await ModelManifest.populate(in: dir) { done, total, inFlight in
+                        Task { @MainActor in
+                            switch state.asrModel {
+                            case .ready, .failed: return
+                            default: state.asrModel = .downloading(inFlight ? nil : Double(done) / Double(total))
+                            }
+                        }
+                    }
+                }.value
+                // FluidAudio must never fetch or replace what was just
+                // verified: its load path deletes the cache and re-downloads
+                // from `main` on any CoreML load error. Offline mode makes
+                // that a plain error instead (ASR is Murmur's only FluidAudio
+                // use, so nothing else is affected).
+                DownloadUtils.enforceOffline = true
+                let models = try await AsrModels.load(from: dir, version: .v2, progressHandler: onProgress)
                 let manager = AsrManager(config: .default)
                 try await manager.loadModels(models)
                 Log.log(String(format: "asr: models ready in %.2fs", Date().timeIntervalSince(start)))

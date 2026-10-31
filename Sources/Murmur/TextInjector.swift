@@ -15,10 +15,37 @@ enum TextInjector {
     /// this many times (~0.5 s), before giving up on the paste (M19).
     private static let activationPollInterval: TimeInterval = 0.05
     private static let activationPollAttempts = 10
-    /// Delay before restoring the previous clipboard (paste must be consumed
-    /// first). 1.5 s rather than 1.0 s: an app that was just activated can be
-    /// slow to process ⌘V, and restoring early would paste the old clipboard.
-    private static let restoreDelay: TimeInterval = 1.5
+    /// The dictation is promised through an NSPasteboardItem data provider,
+    /// so a read of it is the "paste happened" signal (audit M1); a fixed
+    /// timer restored the old clipboard under a slow target (a terminal's
+    /// multi-line paste sheet, a busy Electron app) and the queued ⌘V then
+    /// pasted the old clipboard. How long after the read to restore; see
+    /// `restoreDeadline` for why it equals the old timer.
+    nonisolated static let restoreGrace: TimeInterval = 1.5
+    /// A read this soon after ⌘V is more likely a clipboard manager polling
+    /// on change than the target processing the key event.
+    nonisolated static let bystanderWindow: TimeInterval = 0.1
+    /// If nobody reads the paste within this, give up: restore the clipboard
+    /// (changeCount guard still applies) and tell the user.
+    private static let maxPasteWait: TimeInterval = 10
+
+    /// Set once the target has read the paste: a new inject may then close
+    /// the window early (restore now) instead of waiting out the grace.
+    private static var pendingFinish: (() -> Void)?
+    /// Injects that arrived while one was in flight and unread, run FIFO
+    /// from `endInjection`. Bounded in time by `maxPasteWait`.
+    private static var queue: [() -> Void] = []
+
+    enum Arrival: Equatable { case run, closePreviousThenRun, queue }
+
+    /// What a new inject does about one already in flight. Closing the
+    /// previous window early is only safe once its paste was read; before
+    /// that the text is still owed to the first target, and closing would
+    /// lose it and paste the new text twice. Pure for the test.
+    nonisolated static func arrival(isInjecting: Bool, previousRead: Bool) -> Arrival {
+        guard isInjecting else { return .run }
+        return previousRead ? .closePreviousThenRun : .queue
+    }
     /// Delay between ⌘V and the send word's Return, so an app that handles
     /// paste asynchronously (Electron, some terminals) inserts the text first.
     private static let returnDelay: TimeInterval = 0.15
@@ -33,6 +60,13 @@ enum TextInjector {
     /// dropped rather than racing on the shared pasteboard (e.g. rapid history
     /// "Insert"). Main-actor isolated with the rest of the enum.
     private static var isInjecting = false
+
+    private static func endInjection() {
+        isInjecting = false
+        if !queue.isEmpty {
+            queue.removeFirst()()
+        }
+    }
 
     /// Injects `text` at the cursor. If `target` is provided and not active,
     /// activates it first. `pressReturn` (the send word) presses Return after
@@ -50,9 +84,13 @@ enum TextInjector {
             return
         }
 
-        guard !isInjecting else {
-            Log.log("inject IGNORED: another injection is already in flight")
-            completion?(false, "another injection is in progress")
+        if arrival(isInjecting: isInjecting, previousRead: pendingFinish != nil) == .closePreviousThenRun {
+            Log.log("inject: previous paste was read, closing its window early")
+            pendingFinish?()
+        }
+        if isInjecting {
+            Log.log("inject: queued behind an in-flight injection")
+            queue.append { inject(text, into: target, pressReturn: pressReturn, completion: completion) }
             return
         }
 
@@ -88,7 +126,7 @@ enum TextInjector {
         // A3 re-check: the app may have quit during the activation wait.
         if target.isTerminated {
             Log.log("inject SKIPPED: target app quit during activation delay")
-            isInjecting = false
+            endInjection()
             completion?(false, "target app is no longer running")
             return
         }
@@ -98,7 +136,7 @@ enum TextInjector {
         }
         guard attemptsLeft > 0 else {
             Log.log("inject SKIPPED: target app never became active")
-            isInjecting = false
+            endInjection()
             completion?(false, "the target app didn't come to the front. The text is saved in History")
             return
         }
@@ -111,50 +149,98 @@ enum TextInjector {
         // Send word said on its own: nothing to paste, leave the clipboard alone.
         if text.isEmpty {
             let ok = pressReturn && postKey(returnKey)
-            isInjecting = false
+            endInjection()
             completion?(ok, ok ? nil : "could not create CGEvents")
             return
         }
 
         let pasteboard = NSPasteboard.general
         let saved = snapshot(pasteboard)
+        var ourChangeCount = 0
+        var postedAt: Date?
+        var finished = false
 
-        writeDictation(text, to: pasteboard)
+        // Runs once: from the provider read (plus grace), the timeout, or a
+        // new inject closing this window, whichever comes first.
+        func finish(consumed: Bool) {
+            guard !finished else { return }
+            finished = true
+            pendingFinish = nil
+            if !consumed {
+                Log.log("inject: nothing read the paste within \(Int(maxPasteWait))s")
+            }
+            if !restoreIfUnchanged(pasteboard, items: saved, ourChangeCount: ourChangeCount) {
+                Log.log("inject: pasteboard changed during paste window, skipping restore to avoid clobbering a user copy")
+            }
+            completion?(consumed, consumed ? nil : "the app didn't pick up the paste. The text is saved in History")
+            endInjection()
+        }
+
+        writeDictation(text, to: pasteboard) {
+            pendingFinish = { finish(consumed: true) }
+            let now = Date()
+            let deadline = restoreDeadline(readAt: now, postedAt: postedAt)
+            if deadline.timeIntervalSince(now) < restoreGrace {
+                Log.log("inject: read within \(Int(bystanderWindow * 1000)) ms of ⌘V: fixed timer")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(deadline.timeIntervalSince(now), 0)) { finish(consumed: true) }
+        }
         // changeCount right after WE wrote it. ⌘V only reads the pasteboard, so
         // this value should still hold at restore time — unless something else
         // (a user copy, another app) wrote in the meantime (A2).
-        let ourChangeCount = pasteboard.changeCount
+        ourChangeCount = pasteboard.changeCount
 
         guard postKey(vKey, flags: .maskCommand) else {
+            finished = true
             restore(pasteboard, items: saved)
-            isInjecting = false
+            endInjection()
             completion?(false, "could not create CGEvents")
             return
         }
+        postedAt = Date()
         if pressReturn {
             DispatchQueue.main.asyncAfter(deadline: .now() + returnDelay) {
                 if !postKey(returnKey) { Log.log("inject: could not post Return after paste") }
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
-            if !restoreIfUnchanged(pasteboard, items: saved, ourChangeCount: ourChangeCount) {
-                Log.log("inject: pasteboard changed during paste window, skipping restore to avoid clobbering a user copy")
-            }
-            isInjecting = false
-            completion?(true, nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxPasteWait) { finish(consumed: false) }
+    }
+
+    /// When to restore after the one provider read. An NSPasteboard promise
+    /// resolves once: the first reader triggers the provider, the item then
+    /// holds the data and later readers never call back, and the pasteboard
+    /// does not say who read. So this is the only signal, and honestly a
+    /// weak one: a clipboard manager that ignores the transient marker polls
+    /// on change and reads within `bystanderWindow` of ⌘V, in which case the
+    /// restore falls back to the old fixed timer from ⌘V. A later read is
+    /// taken as the target's and the restore runs `restoreGrace` after it.
+    /// Either way the restore is never earlier than the old 1.5 s timer,
+    /// only later under a slow target. No read at all: `maxPasteWait`.
+    nonisolated static func restoreDeadline(readAt: Date, postedAt: Date?) -> Date {
+        if let postedAt, readAt.timeIntervalSince(postedAt) > bystanderWindow {
+            return readAt.addingTimeInterval(restoreGrace)
         }
+        return (postedAt ?? readAt).addingTimeInterval(restoreGrace)
     }
 
     // MARK: - Clipboard snapshot/restore
 
     /// Writes dictated text marked private (M2): `.currentHostOnly` keeps it
     /// off Universal Clipboard, the markers keep it out of clipboard managers.
-    nonisolated static func writeDictation(_ text: String, to pasteboard: NSPasteboard) {
+    /// With `onConsumed`, the string is promised rather than written and the
+    /// closure fires (on main) each time a reader resolves it.
+    nonisolated static func writeDictation(_ text: String, to pasteboard: NSPasteboard, onConsumed: (() -> Void)? = nil) {
         pasteboard.prepareForNewContents(with: .currentHostOnly)
-        pasteboard.setString(text, forType: .string)
-        pasteboard.setData(Data(), forType: transientType)
-        pasteboard.setData(Data(), forType: concealedType)
+        let item = NSPasteboardItem()
+        if let onConsumed {
+            item.setDataProvider(DictationProvider(text: text, onConsumed: onConsumed), forTypes: [.string])
+        } else {
+            item.setString(text, forType: .string)
+        }
+        item.setData(Data(), forType: transientType)
+        item.setData(Data(), forType: concealedType)
+        pasteboard.writeObjects([item])
     }
 
     /// History's Copy button. A transcript copied from history is the same
@@ -206,6 +292,24 @@ enum TextInjector {
             return item
         }
         pasteboard.writeObjects(restored)
+    }
+
+    /// Resolves the promised `.string` when a reader asks for it. The item
+    /// retains its provider, and the signal hops to main so the caller's
+    /// state stays main-actor.
+    private final class DictationProvider: NSObject, NSPasteboardItemDataProvider {
+        private let text: String
+        private let onConsumed: () -> Void
+
+        init(text: String, onConsumed: @escaping () -> Void) {
+            self.text = text
+            self.onConsumed = onConsumed
+        }
+
+        func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+            item.setString(text, forType: type)
+            DispatchQueue.main.async(execute: onConsumed)
+        }
     }
 
     // MARK: - Key synthesis

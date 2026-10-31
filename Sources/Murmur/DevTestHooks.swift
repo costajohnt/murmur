@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG && MURMUR_DEV_HOOKS
 import AppKit
 import FluidAudio
 import Foundation
@@ -19,9 +19,11 @@ extension AppDelegate {
 
     /// Headless test hooks (dev only): trigger flows from the command line via
     /// distributed notifications so evidence can be captured without GUI
-    /// scripting. DEBUG-only — these are system-wide observers any local
-    /// process could post to (mic capture, injection, history mutation), so
-    /// they must never exist in a release build. Example:
+    /// scripting. These are system-wide observers any local process could
+    /// post to (mic capture, injection, history mutation), so they are
+    /// compiled only when MURMUR_DEV_HOOKS is set on top of DEBUG
+    /// (`MURMUR_DEV_HOOKS=1 scripts/build.sh`); the default from-source
+    /// build has none of them (audit M4). Example:
     ///   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("com.costajohnt.murmur.spikeC"), object: nil, userInfo: nil, deliverImmediately: true)'
     func registerTestHooks() {
         onMainActor("com.costajohnt.murmur.spikeC") { _ in

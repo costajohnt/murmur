@@ -1,3 +1,4 @@
+import SwiftData
 import XCTest
 
 /// Recovery only helps if it actually moves the unopenable store out of the
@@ -45,6 +46,31 @@ final class HistoryStoreRecoveryTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: archive.appendingPathComponent("history.store").path))
+    }
+
+    /// The archived rows' WAVs move with the store, so the fresh store's
+    /// sweep (which runs again on every later launch) never sees them.
+    func testArchivesAudioWithTheStoreAndLaterSweepsLeaveIt() throws {
+        let fm = FileManager.default
+        try write("history.store")
+        let audio = dir.appendingPathComponent("audio", isDirectory: true)
+        try fm.createDirectory(at: audio, withIntermediateDirectories: true)
+        let wav = audio.appendingPathComponent("old.wav")
+        try Data("RIFF".utf8).write(to: wav)
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -7200)], ofItemAtPath: wav.path)
+
+        let archive = try HistoryStore.archiveUnopenableStore(in: dir)
+
+        let archivedWav = archive.appendingPathComponent("audio/old.wav")
+        XCTAssertTrue(fm.fileExists(atPath: archivedWav.path))
+        XCTAssertFalse(fm.fileExists(atPath: audio.path))
+
+        // Second launch: a fresh (empty) store over the same support dir.
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: Dictation.self, configurations: config)
+        let fresh = HistoryStore(container: container, legacyDir: dir.appendingPathComponent("legacy"), supportDir: dir)
+        fresh.prune()
+        XCTAssertTrue(fm.fileExists(atPath: archivedWav.path), "archived audio must survive the sweep")
     }
 
     func testThrowsAndLeavesNoEmptyArchiveWhenThereIsNoStore() throws {

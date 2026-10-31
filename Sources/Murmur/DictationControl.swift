@@ -51,6 +51,17 @@ enum DictationControl {
     }
 
     /// Under ~0.3 s of audio is a stray double-click, not speech.
+    /// Minimum gap between automatic Setup pop-ups after a paste failed for
+    /// lack of Accessibility (audit H1). Once per session left the user with
+    /// only a menubar glyph on every later failure; every time would steal
+    /// focus from the app they are dictating into on each attempt.
+    static let setupAutoOpenCooldown: TimeInterval = 5 * 60
+
+    static func shouldAutoOpenSetup(lastOpened: Date?, now: Date) -> Bool {
+        guard let lastOpened else { return true }
+        return now.timeIntervalSince(lastOpened) >= setupAutoOpenCooldown
+    }
+
     static func isSpeechLength(_ sampleCount: Int) -> Bool {
         sampleCount > Int(AudioRecorder.sampleRate * 0.3)
     }

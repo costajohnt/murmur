@@ -31,6 +31,18 @@ struct OnboardingView: View {
     private let pollTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var micGranted: Bool { micStatus == .authorized }
+
+    /// A row that is already listed and switched on but no longer matches
+    /// this build (every rebuild of an ad-hoc signed app) reads exactly like
+    /// "not granted" to AXIsProcessTrusted, and macOS never re-prompts for an
+    /// existing row, so the copy has to cover that case (audit H1).
+    private var accessibilityDetail: String {
+        var detail = "Lets Murmur paste the transcript into whatever app you're typing in."
+        if !accessibilityTrusted {
+            detail += " Add Murmur under Privacy & Security > Accessibility. If Murmur is already listed and switched on, this build no longer matches that grant: remove Murmur from the list, add it again, then relaunch Murmur."
+        }
+        return detail
+    }
     private var allGranted: Bool { micGranted && accessibilityTrusted }
 
     var body: some View {
@@ -55,7 +67,7 @@ struct OnboardingView: View {
                 )
                 PermissionRow(
                     title: "Accessibility",
-                    detail: "Lets Murmur paste the transcript into whatever app you're typing in. Add Murmur under Privacy & Security > Accessibility.",
+                    detail: accessibilityDetail,
                     granted: accessibilityTrusted,
                     actionTitle: "Open System Settings",
                     actionEnabled: !accessibilityTrusted,

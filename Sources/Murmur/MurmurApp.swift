@@ -116,13 +116,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let failure = HistoryStore.openFailure {
             AppStatus.shared.report(failure)
         }
+        // Retention otherwise only runs on the next dictation, so a user who
+        // stops dictating keeps 30-day-old audio forever (audit M2).
+        HistoryStore.shared?.prune()
         _ = TargetAppTracker.shared // start tracking activations immediately
         showPill()
-        #if DEBUG
+        #if DEBUG && MURMUR_DEV_HOOKS
         // Dev-only: system-wide DistributedNotificationCenter hooks that can
-        // trigger recording/injection/history mutation. NEVER registered in
-        // release builds — any local process could
-        // post these notifications.
+        // trigger recording/injection/history mutation. Any local process
+        // could post these notifications, so they need an explicit opt-in
+        // flag on top of DEBUG (audit M4): MURMUR_DEV_HOOKS=1 scripts/build.sh
         registerTestHooks()
         #endif
         DictationCoordinator.shared.preloadAsr()

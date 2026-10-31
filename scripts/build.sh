@@ -4,6 +4,9 @@
 # By default the app is ad-hoc signed, so this works on a fresh clone with
 # no Apple certificate. To sign with a real cert, set:
 #   DEVELOPMENT_TEAM=XXXXXXXXXX [CODE_SIGN_IDENTITY="Apple Development"] scripts/build.sh
+# The DistributedNotificationCenter test hooks (DevTestHooks.swift) are off
+# unless you ask for them, since any local process can post to them:
+#   MURMUR_DEV_HOOKS=1 scripts/build.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,9 +15,15 @@ xcodegen generate
 APP="build/DerivedData/Build/Products/Debug/Murmur.app"
 DEV_CERT="Murmur Dev Signing"
 
-SIGN_ARGS=()
+BUILD_ARGS=()
+if [[ -n "${MURMUR_DEV_HOOKS:-}" ]]; then
+  BUILD_ARGS+=(SWIFT_ACTIVE_COMPILATION_CONDITIONS="DEBUG MURMUR_DEV_HOOKS")
+else
+  # Only the pipelineFixture hook reads it.
+  BUILD_ARGS+=(EXCLUDED_SOURCE_FILE_NAMES=fixture.wav)
+fi
 if [[ -n "${DEVELOPMENT_TEAM:-}" ]]; then
-  SIGN_ARGS+=(
+  BUILD_ARGS+=(
     DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
     CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Apple Development}"
   )
@@ -26,7 +35,7 @@ xcodebuild \
   -configuration Debug \
   -derivedDataPath build/DerivedData \
   build \
-  "${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"}"
+  "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}"
 
 # Re-sign with the local self-signed cert so TCC grants survive rebuilds.
 # codesign directly, not CODE_SIGN_IDENTITY: the cert is deliberately

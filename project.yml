@@ -98,6 +98,7 @@ targets:
       - path: Sources/Murmur/TextInjector.swift
       - path: Sources/Murmur/UpdateChecker.swift
       - path: Sources/Murmur/PillPlacement.swift
+      - path: Sources/Murmur/ModelManifest.swift
       - path: Sources/Murmur/VoiceCommands.swift
       - path: Sources/Murmur/UtteranceSegmenter.swift
       - path: Sources/Murmur/WakeRetry.swift

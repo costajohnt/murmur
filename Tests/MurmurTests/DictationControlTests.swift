@@ -124,3 +124,14 @@ final class WakeListenerStateTests: XCTestCase {
         XCTAssertFalse(s.running)
     }
 }
+
+extension DictationControlTests {
+    /// Audit H1: the Accessibility guidance re-fires after a failed paste,
+    /// throttled, instead of once per app session.
+    func testSetupAutoOpenRefiresAfterCooldown() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertTrue(DictationControl.shouldAutoOpenSetup(lastOpened: nil, now: t0))
+        XCTAssertFalse(DictationControl.shouldAutoOpenSetup(lastOpened: t0, now: t0.addingTimeInterval(60)))
+        XCTAssertTrue(DictationControl.shouldAutoOpenSetup(lastOpened: t0, now: t0.addingTimeInterval(DictationControl.setupAutoOpenCooldown)))
+    }
+}
