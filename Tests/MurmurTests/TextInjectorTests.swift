@@ -86,6 +86,41 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertEqual(consumed, 1)
     }
 
+    /// A clipboard manager reads the pasteboard the moment it changes, before
+    /// ⌘V is posted; that read must not count, or the restore fires early and
+    /// the target pastes the user's old clipboard.
+    func testReadBeforePasteIsPostedDoesNotCount() {
+        var window = TextInjector.PasteWindow()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        XCTAssertFalse(window.read(at: t0))
+        XCTAssertNil(window.lastReadAt)
+
+        window.posted(at: t0.addingTimeInterval(0.01))
+        XCTAssertFalse(window.read(at: t0), "a read stamped before the post still does not count")
+        XCTAssertTrue(window.read(at: t0.addingTimeInterval(0.5)))
+        XCTAssertEqual(window.lastReadAt, t0.addingTimeInterval(0.5))
+        // A later read moves the restore out again (debounce).
+        XCTAssertTrue(window.read(at: t0.addingTimeInterval(3)))
+        XCTAssertEqual(window.lastReadAt, t0.addingTimeInterval(3))
+    }
+
+    /// The promised write path keeps the changeCount guard: a user copy after
+    /// the target read the paste must not be clobbered by the restore.
+    func testPromisedWriteStillSkipsRestoreAfterUserCopy() {
+        pasteboard.clearContents()
+        pasteboard.setString("original", forType: .string)
+        let saved = TextInjector.snapshot(pasteboard)
+        TextInjector.writeDictation("dictated", to: pasteboard) {}
+        let ours = pasteboard.changeCount
+        XCTAssertEqual(pasteboard.string(forType: .string), "dictated")
+
+        pasteboard.clearContents()
+        pasteboard.setString("user copy", forType: .string)
+
+        XCTAssertFalse(TextInjector.restoreIfUnchanged(pasteboard, items: saved, ourChangeCount: ours))
+        XCTAssertEqual(pasteboard.string(forType: .string), "user copy")
+    }
+
     func testRestoreSkippedWhenUserCopiedMidPaste() {
         pasteboard.clearContents()
         pasteboard.setString("original", forType: .string)

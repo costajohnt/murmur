@@ -16,12 +16,15 @@ enum TextInjector {
     private static let activationPollInterval: TimeInterval = 0.05
     private static let activationPollAttempts = 10
     /// The dictation is promised through an NSPasteboardItem data provider,
-    /// so the target's read of it is the "paste happened" signal (audit M1);
-    /// a fixed timer restored the old clipboard under a slow target (a
-    /// terminal's multi-line paste sheet, a busy Electron app) and the queued
-    /// ⌘V then pasted the old clipboard. Restore this long after that read,
-    /// in case the app reads twice.
-    private static let restoreGrace: TimeInterval = 0.5
+    /// so a read of it is the "paste happened" signal (audit M1); a fixed
+    /// timer restored the old clipboard under a slow target (a terminal's
+    /// multi-line paste sheet, a busy Electron app) and the queued ⌘V then
+    /// pasted the old clipboard. The pasteboard does not say who read, and
+    /// a clipboard manager (Raycast, Paste, Maccy) that ignores the
+    /// transient marker reads too, so the restore waits this long after the
+    /// LAST read rather than the first: with no bystander it is exact, with
+    /// one it is never earlier than the old timer was.
+    private static let restoreGrace: TimeInterval = 1.5
     /// If nobody reads the paste within this, give up: no restore (the
     /// queued ⌘V would paste the old clipboard) and the user is told.
     private static let maxPasteWait: TimeInterval = 10
@@ -126,9 +129,10 @@ enum TextInjector {
         let saved = snapshot(pasteboard)
         var ourChangeCount = 0
         var finished = false
+        var window = PasteWindow()
 
-        // Runs once: from the provider read (plus grace) or the timeout,
-        // whichever comes first.
+        // Runs once: from the last provider read (plus grace) or the
+        // timeout, whichever comes first.
         func finish(consumed: Bool) {
             guard !finished else { return }
             finished = true
@@ -144,7 +148,15 @@ enum TextInjector {
         }
 
         writeDictation(text, to: pasteboard) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + restoreGrace) { finish(consumed: true) }
+            let now = Date()
+            guard window.read(at: now) else {
+                Log.log("inject: pasteboard read before ⌘V was posted (a clipboard manager?), ignored")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + restoreGrace) {
+                // Debounce: a later read restarted the grace.
+                if window.lastReadAt == now { finish(consumed: true) }
+            }
         }
         // changeCount right after WE wrote it. ⌘V only reads the pasteboard, so
         // this value should still hold at restore time — unless something else
@@ -158,6 +170,7 @@ enum TextInjector {
             completion?(false, "could not create CGEvents")
             return
         }
+        window.posted(at: Date())
         if pressReturn {
             DispatchQueue.main.asyncAfter(deadline: .now() + returnDelay) {
                 if !postKey(returnKey) { Log.log("inject: could not post Return after paste") }
@@ -165,6 +178,26 @@ enum TextInjector {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + maxPasteWait) { finish(consumed: false) }
+    }
+
+    /// Which provider reads count as the target consuming the paste: only
+    /// those after ⌘V was posted. A read before that is a bystander reacting
+    /// to the pasteboard change (a clipboard manager), never the target.
+    /// Pure so the rule is testable; the timers live in `performPaste`.
+    nonisolated struct PasteWindow {
+        private(set) var postedAt: Date?
+        private(set) var lastReadAt: Date?
+
+        mutating func posted(at now: Date) {
+            postedAt = now
+        }
+
+        /// Returns whether the read counts; counted reads update `lastReadAt`.
+        mutating func read(at now: Date) -> Bool {
+            guard let postedAt, now >= postedAt else { return false }
+            lastReadAt = now
+            return true
+        }
     }
 
     // MARK: - Clipboard snapshot/restore
