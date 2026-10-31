@@ -453,11 +453,26 @@ final class DictationCoordinator {
                         }
                     }
                 }
-                // Download, then verify the cache against the pinned
-                // checksums before CoreML parses anything (audit M3). The
-                // hashing (~460 MB) runs off the main actor.
-                let dir = try await AsrModels.download(version: .v2, progressHandler: onProgress)
-                try await Task.detached(priority: .userInitiated) { try ModelManifest.verify(in: dir) }.value
+                // Fill FluidAudio's cache from the pinned revision, verifying
+                // every file, before CoreML parses anything (audit M3). The
+                // hashing (~460 MB) and any download run off the main actor.
+                let dir = AsrModels.defaultCacheDirectory(for: .v2)
+                try await Task.detached(priority: .userInitiated) {
+                    try await ModelManifest.populate(in: dir) { done, total in
+                        Task { @MainActor in
+                            switch state.asrModel {
+                            case .ready, .failed: return
+                            default: state.asrModel = .downloading(Double(done) / Double(total))
+                            }
+                        }
+                    }
+                }.value
+                // FluidAudio must never fetch or replace what was just
+                // verified: its load path deletes the cache and re-downloads
+                // from `main` on any CoreML load error. Offline mode makes
+                // that a plain error instead (ASR is Murmur's only FluidAudio
+                // use, so nothing else is affected).
+                DownloadUtils.enforceOffline = true
                 let models = try await AsrModels.load(from: dir, version: .v2, progressHandler: onProgress)
                 let manager = AsrManager(config: .default)
                 try await manager.loadModels(models)
