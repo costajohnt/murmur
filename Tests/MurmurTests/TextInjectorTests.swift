@@ -133,6 +133,16 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "user copy")
     }
 
+    /// A second dictation while the first paste is still unread (slow
+    /// target) must wait, not close the first window: closing would restore
+    /// the clipboard under the first target's queued ⌘V and paste the second
+    /// text twice. Once the first paste was read, closing early is safe.
+    func testSecondInjectQueuesUntilTheFirstPasteWasRead() {
+        XCTAssertEqual(TextInjector.arrival(isInjecting: false, previousRead: false), .run)
+        XCTAssertEqual(TextInjector.arrival(isInjecting: true, previousRead: false), .queue)
+        XCTAssertEqual(TextInjector.arrival(isInjecting: true, previousRead: true), .closePreviousThenRun)
+    }
+
     func testRestoreSkippedWhenUserCopiedMidPaste() {
         pasteboard.clearContents()
         pasteboard.setString("original", forType: .string)
